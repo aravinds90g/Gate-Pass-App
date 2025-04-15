@@ -1,13 +1,22 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
+    "name": "Gate Pass App",
+    "slug": "gate-pass-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "extra": {
+      "QR_SECRET": "GATE-ACCESS-2025",
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "59fedbd6-d3e9-47e6-9f9f-8ab4d87d4836"
+      }
+    },
     "ios": {
       "supportsTablet": true
     },
@@ -15,12 +24,25 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.aravinds90g.myapp",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "bundler": "metro",
       "output": "static",
       "favicon": "./assets/images/favicon.png"
+    },
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "react-icons",
+          "tailwindcss"
+        ],
+        "listUnknownPackages": false
+      }
     },
     "plugins": [
       "expo-router",
@@ -36,6 +58,7 @@
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "owner": "aravind9655255982"
   }
 }
