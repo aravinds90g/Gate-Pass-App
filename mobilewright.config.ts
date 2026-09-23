@@ -30,7 +30,8 @@ const onCloud = !!process.env.MOBILENEXT_API_KEY;
 const config: MobilewrightConfig = {
   testDir: "./tests",
   bundleId: "com.aravinds90g.myapp",
-  timeout: 120_000,
+  // Generous: the Render backend cold-starts (30-90s+) on first request.
+  timeout: 300_000,
   // Free plan allows 1 concurrent session: never parallelize on cloud.
   workers: 1,
   projects: [

@@ -66,13 +66,23 @@ async function fillField(screen: any, name: string, index: number, value: string
   // two textfields, both with empty text), so go straight positional:
   // email = 1st textfield, password = 2nd.
   await screen.getByRole("textfield").nth(index).fill(value);
+  const actual = await screen
+    .getByRole("textfield")
+    .nth(index)
+    .getText()
+    .catch(() => "?");
+  console.log(`[fillField] index=${index} expected=${JSON.stringify(value)} actual=${JSON.stringify(actual)}`);
 }
 
 async function tapLogin(screen: any) {
   // The Login submit TouchableOpacity is NOT exposed as role=button
   // (the only button on screen is the "Sign Up" link). Its label appears
   // as text alongside the "Login" title, so tap the second match, which
-  // always lands inside the submit button.
+  // always lands inside the submit button. Tap the title first to dismiss
+  // the keyboard — otherwise it can cover the submit button and swallow
+  // the tap, leaving the request unsent with no error shown.
+  await screen.getByText("Login").nth(0).tap();
+  await new Promise((r) => setTimeout(r, 1000));
   await screen.getByText("Login").nth(1).tap();
 }
 
@@ -85,9 +95,27 @@ async function ensureLoggedInAsStudent({ device, screen, bundleId }: any) {
     .catch(() => false);
 
   if (onLoginScreen) {
-    await fillField(screen, "Enter email", 0, "aravind@gmail.com");
-    await fillField(screen, "Enter password", 1, "123456");
-    await tapLogin(screen);
+    // Attempts: mistyped chars (server rejects -> banner) or a swallowed
+    // tap (no state change at all) are both retried with fresh fills.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await fillField(screen, "Enter email", 0, "aravind@gmail.com");
+      await fillField(screen, "Enter password", 1, "123456");
+      await tapLogin(screen);
+
+      const loggedIn = await screen
+        .getByText("Aravind S")
+        .isVisible({ timeout: 20_000 })
+        .catch(() => false);
+      if (loggedIn) break;
+      const rejected = await screen
+        .getByText("Invalid email or password")
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false);
+      console.log(
+        `[login] attempt=${attempt} loggedIn=${loggedIn} rejected=${rejected}`
+      );
+      if (attempt === 3) break;
+    }
   }
 
   // Student profile: name badge (backend on Render may cold-start).
