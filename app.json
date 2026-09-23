@@ -14,7 +14,7 @@
         "origin": false
       },
       "eas": {
-        "projectId": "59fedbd6-d3e9-47e6-9f9f-8ab4d87d4836"
+        "projectId": "ee69f29d-781f-46b3-8672-1ca468c81c91"
       }
     },
     "ios": {
@@ -59,6 +59,6 @@
     "experiments": {
       "typedRoutes": true
     },
-    "owner": "aravind9655255982"
+    "owner": "aravinds90g"
   }
 }
