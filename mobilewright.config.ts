@@ -23,6 +23,9 @@ if (!apkPath) {
     `[mobilewright] No APK found (tried: ${apkCandidates.join(", ")}). ` +
       "Tests will run against the already-installed app."
   );
+} else {
+  // Specs read this for per-file fresh installs (logged-out start).
+  process.env.E2E_APK_PATH = apkPath;
 }
 
 const onCloud = !!process.env.MOBILENEXT_API_KEY;

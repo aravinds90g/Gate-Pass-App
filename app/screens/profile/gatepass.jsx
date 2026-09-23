@@ -375,7 +375,12 @@ export default function GatePass() {
                       value={
                         watch("comingDate")
                           ? new Date(watch("comingDate"))
-                          : new Date()
+                          : // Default to the leaving date (never below
+                            // minimumDate): a value below minimumDate
+                            // prevents the native dialog from opening.
+                            watch("date")
+                            ? new Date(watch("date"))
+                            : new Date()
                       }
                       mode="date"
                       display="default"
