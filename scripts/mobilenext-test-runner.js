@@ -137,6 +137,22 @@ function validateConfig() {
   if (!config.apiKey && config.dryRun) {
     warn("No API key set — running in DRY_RUN simulation mode.");
   }
+
+  // Fail fast on a misconfigured base URL (e.g. an uninterpolated
+  // "${{ ... }}" placeholder leaking in from CI env mapping) instead of
+  // dying later inside allocateDevice with "Failed to parse URL".
+  if (!config.dryRun) {
+    try {
+      const u = new URL(config.apiUrl);
+      if (!/^https?:$/.test(u.protocol)) throw new Error("bad protocol");
+    } catch {
+      throw new Error(
+        `MOBILENEXT_API_URL is invalid: ${JSON.stringify(config.apiUrl)}. ` +
+          "Set it to the MobileNext Cloud base URL " +
+          "(e.g. https://api.mobilenext.cloud/v1) or use DRY_RUN=1."
+      );
+    }
+  }
 }
 
 // ---- Stage 1: device allocation -------------------------------------------
