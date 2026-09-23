@@ -55,6 +55,20 @@ jobs:
         # environment; with it set the MobileNextDriver targets real cloud
         # devices (no local device exists on workers, so the key is required).
         run: npx mobilewright test
+      - name: Collect test results
+        # Mobilewright only writes test-results/.last-run.json (a DOTFILE,
+        # invisible to the `test-results/**/*` glob below), plus
+        # per-failure error-context dirs. Promote the status to a visible
+        # file so the artifact upload always has something to archive.
+        if: ${{ always() }}
+        run: |
+          mkdir -p test-results
+          if [ -f test-results/.last-run.json ]; then
+            cp test-results/.last-run.json test-results/last-run.json
+          else
+            echo '{"status":"unknown","note":"no .last-run.json produced"}' > test-results/last-run.json
+          fi
+          ls -la test-results/
       - uses: eas/upload_artifact
         if: ${{ always() }}
         with:
