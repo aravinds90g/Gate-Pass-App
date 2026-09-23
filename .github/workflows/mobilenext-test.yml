@@ -25,7 +25,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Setup Java (required for EAS Android builds / Gradle)
@@ -75,15 +75,10 @@ jobs:
           ls -lh build-artifacts/
           echo "apk-path=$(pwd)/build-artifacts/app-preview.apk" >> "$GITHUB_OUTPUT"
 
-      - name: Run Mobile Next Cloud E2E tests
-        run: node scripts/mobilenext-test-runner.js
+      - name: Run Mobilewright E2E on MobileNext Cloud
+        run: npx mobilewright test
         env:
-          APK_PATH: ${{ steps.download-apk.outputs.apk-path }}
-          APP_PACKAGE: ${{ env.APP_PACKAGE }}
-          MOBILENEXT_API_URL: ${{ secrets.MOBILENEXT_API_URL }}
           MOBILENEXT_API_KEY: ${{ secrets.MOBILENEXT_API_KEY }}
-          MOBILENEXT_PROJECT_ID: ${{ secrets.MOBILENEXT_PROJECT_ID }}
-          MOBILENEXT_DEVICE: ${{ vars.MOBILENEXT_DEVICE || 'android:latest' }}
 
       - name: Upload test results + logs
         if: always()

@@ -24,7 +24,7 @@ on:
 
 defaults:
   tools:
-    node: '20'
+    node: '22'
 
 jobs:
   build_android:
@@ -45,19 +45,16 @@ jobs:
         id: download_build
         with:
           build_id: ${{ needs.build_android.outputs.build_id }}
-      - name: Run MobileNext Cloud E2E tests
-        # NOTE: only static values go in `env:` below. Dynamic `${{ }}`
-        # expressions (steps/inputs) must live in `run:` where EAS
-        # interpolates them on the worker. The MOBILENEXT_* secrets are
-        # inherited automatically from the job's `preview` EAS environment —
-        # do NOT map them here (a literal mapping would shadow the real
-        # secret with an uninterpolated string).
+      - name: Stage APK for Mobilewright
         run: |
-          APK_PATH="${{ steps.download_build.outputs.artifact_path }}" \
-          MOBILENEXT_DEVICE="${{ inputs.device || 'android:latest' }}" \
-          node scripts/mobilenext-test-runner.js
-        env:
-          APP_PACKAGE: com.aravinds90g.myapp
+          mkdir -p build-artifacts
+          cp "${{ steps.download_build.outputs.artifact_path }}" build-artifacts/app-preview.apk
+          ls -lh build-artifacts/
+      - name: Run Mobilewright E2E tests
+        # MOBILENEXT_API_KEY is inherited from the job's `preview` EAS
+        # environment; with it set the MobileNextDriver targets real cloud
+        # devices (no local device exists on workers, so the key is required).
+        run: npx mobilewright test
       - uses: eas/upload_artifact
         if: ${{ always() }}
         with:
