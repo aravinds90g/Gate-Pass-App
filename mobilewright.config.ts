@@ -9,6 +9,9 @@ import * as path from "node:path";
 const apkCandidates = [
   process.env.APK_PATH,
   "./build-artifacts/app-preview.apk",
+  // Standalone release build (bundled JS, no Metro needed) — preferred
+  // locally so the emulator behaves exactly like the cloud devices.
+  "./android/app/build/outputs/apk/release/app-release.apk",
   "./android/app/build/outputs/apk/debug/app-debug.apk",
 ].filter((p): p is string => !!p);
 const apkPath = apkCandidates
