@@ -28,7 +28,8 @@ const config: MobilewrightConfig = {
   testDir: "./tests",
   bundleId: "com.aravinds90g.myapp",
   timeout: 120_000,
-  workers: process.env.CI ? 2 : 1,
+  // Free plan allows 1 concurrent session: never parallelize on cloud.
+  workers: 1,
   projects: [
     {
       name: "android",
@@ -36,7 +37,9 @@ const config: MobilewrightConfig = {
         platform: "android",
         // Real Pixel on MobileNext Cloud, local emulator for dev runs.
         deviceType: onCloud ? "real" : "emulator",
-        deviceName: /Pixel 7/,
+        // Free plan covers latest models only (Pixel 7 needs a paid
+        // plan); local emulator stays on the Pixel 7 API 34 AVD.
+        deviceName: onCloud ? /Pixel 10/ : /Pixel 7/,
         ...(apkPath ? { installApps: apkPath } : {}),
       },
     },
