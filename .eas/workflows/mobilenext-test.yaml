@@ -1,0 +1,63 @@
+name: MobileNext Cloud Test (Android APK)
+
+# Native EAS CI/CD counterpart to .github/workflows/mobilenext-test.yml.
+# Builds the Android preview APK (eas.json `preview` profile) and runs the
+# MobileNext Cloud E2E suite (scripts/mobilenext-test-runner.js) against it.
+#
+# Required EAS environment variables / secrets (dashboard or `eas env:*`):
+#   MOBILENEXT_API_URL, MOBILENEXT_API_KEY, MOBILENEXT_PROJECT_ID (optional)
+# Secrets are inherited automatically at runtime — do not hardcode them here.
+#
+# Run manually with an optional device override:
+#   eas workflow:run .eas/workflows/mobilenext-test.yaml -F device="android:latest"
+
+on:
+  push:
+    branches: ['main']
+  workflow_dispatch:
+    inputs:
+      device:
+        type: string
+        required: false
+        description: 'MobileNext device filter (e.g. "android:latest")'
+        default: 'android:latest'
+
+defaults:
+  tools:
+    node: '20'
+
+jobs:
+  build_android:
+    name: Build Android preview APK
+    type: build
+    params:
+      platform: android
+      profile: preview
+
+  test_mobilenext:
+    name: Run MobileNext E2E tests
+    needs: [build_android]
+    environment: preview
+    steps:
+      - uses: eas/checkout
+      - uses: eas/install_node_modules
+      - uses: eas/download_build
+        id: download_build
+        with:
+          build_id: ${{ needs.build_android.outputs.build_id }}
+      - name: Run MobileNext Cloud E2E tests
+        run: |
+          APK_PATH="${{ steps.download_build.outputs.artifact_path }}" \
+          MOBILENEXT_DEVICE="${{ inputs.device || 'android:latest' }}" \
+          node scripts/mobilenext-test-runner.js
+        env:
+          APP_PACKAGE: com.aravinds90g.myapp
+          MOBILENEXT_API_URL: ${{ secrets.MOBILENEXT_API_URL }}
+          MOBILENEXT_API_KEY: ${{ secrets.MOBILENEXT_API_KEY }}
+          MOBILENEXT_PROJECT_ID: ${{ secrets.MOBILENEXT_PROJECT_ID }}
+      - uses: eas/upload_artifact
+        if: ${{ always() }}
+        with:
+          type: other
+          name: mobilenext-results
+          path: test-results/**/*

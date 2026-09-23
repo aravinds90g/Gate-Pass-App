@@ -1,0 +1,97 @@
+name: MobileNext Cloud Test (Android APK)
+
+# Builds the Android APK with EAS (preview profile) on every push to main,
+# then runs automated E2E tests on Mobile Next Cloud devices.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: mobilenext-test-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test-android:
+    name: EAS APK build + MobileNext E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      APP_PACKAGE: com.aravinds90g.myapp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Java (required for EAS Android builds / Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      # Build the preview APK on EAS. --json emits build metadata we reuse
+      # below to locate/download the artifact.
+      - name: Build Android APK with EAS (preview)
+        run: |
+          eas build \
+            --platform android \
+            --profile preview \
+            --non-interactive \
+            --no-wait \
+            --json > eas-build.json
+          cat eas-build.json
+
+      - name: Download APK artifact
+        id: download-apk
+        run: |
+          # Prefer the direct artifact URL from the build metadata when present.
+          ARTIFACT_URL=$(node -e "const b=require('./eas-build.json'); const x=Array.isArray(b)?b[0]:b; console.log(x.artifactUrl||x.artifacts?.applicationArchiveUrl||'')" || true)
+          mkdir -p build-artifacts
+          if [ -n "$ARTIFACT_URL" ] && [ "$ARTIFACT_URL" != "undefined" ]; then
+            echo "Downloading APK from $ARTIFACT_URL"
+            curl -fL -o build-artifacts/app-preview.apk "$ARTIFACT_URL"
+          else
+            # Fall back to polling EAS until the build finishes, then download.
+            echo "No direct URL — waiting for EAS build to finish..."
+            BUILD_ID=$(node -e "const b=require('./eas-build.json'); const x=Array.isArray(b)?b[0]:b; console.log(x.id||x.buildId||'')" || true)
+            echo "Build ID: $BUILD_ID"
+            eas build:download --platform android --latest --output build-artifacts/app-preview.apk --non-interactive || \
+              eas build:download --id "$BUILD_ID" --output build-artifacts/app-preview.apk --non-interactive
+          fi
+          ls -lh build-artifacts/
+          echo "apk-path=$(pwd)/build-artifacts/app-preview.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Run Mobile Next Cloud E2E tests
+        run: node scripts/mobilenext-test-runner.js
+        env:
+          APK_PATH: ${{ steps.download-apk.outputs.apk-path }}
+          APP_PACKAGE: ${{ env.APP_PACKAGE }}
+          MOBILENEXT_API_URL: ${{ secrets.MOBILENEXT_API_URL }}
+          MOBILENEXT_API_KEY: ${{ secrets.MOBILENEXT_API_KEY }}
+          MOBILENEXT_PROJECT_ID: ${{ secrets.MOBILENEXT_PROJECT_ID }}
+          MOBILENEXT_DEVICE: ${{ vars.MOBILENEXT_DEVICE || 'android:latest' }}
+
+      - name: Upload test results + logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobilenext-results
+          path: |
+            test-results/
+            build-artifacts/
+            eas-build.json
+          if-no-files-found: warn
