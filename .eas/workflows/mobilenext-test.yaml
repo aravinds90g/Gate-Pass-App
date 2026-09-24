@@ -2,25 +2,22 @@ name: MobileNext Cloud Test (Android APK)
 
 # Native EAS CI/CD counterpart to .github/workflows/mobilenext-test.yml.
 # Builds the Android preview APK (eas.json `preview` profile) and runs the
-# MobileNext Cloud E2E suite (scripts/mobilenext-test-runner.js) against it.
+# Mobilewright suite (tests/*.spec.ts) on real MobileNext Cloud devices.
 #
-# Required EAS environment variables / secrets (dashboard or `eas env:*`):
-#   MOBILENEXT_API_URL, MOBILENEXT_API_KEY, MOBILENEXT_PROJECT_ID (optional)
-# Secrets are inherited automatically at runtime — do not hardcode them here.
+# Required EAS secret (dashboard or `eas env:*`), in the `preview`
+# environment (the test job below sets `environment: preview`, so it is
+# inherited automatically at runtime — do not hardcode it here):
+#   MOBILENEXT_API_KEY   (starts with `mob_`, from app.mobilenext.ai)
+# No project/org ID is needed: the API acts on the organization the key
+# is bound to (else the caller's default organization).
 #
-# Run manually with an optional device override:
-#   eas workflow:run .eas/workflows/mobilenext-test.yaml -F device="android:latest"
+# Run manually with:
+#   eas workflow:run .eas/workflows/mobilenext-test.yaml
 
 on:
   push:
     branches: ['main']
   workflow_dispatch:
-    inputs:
-      device:
-        type: string
-        required: false
-        description: 'MobileNext device filter (e.g. "android:latest")'
-        default: 'android:latest'
 
 defaults:
   tools:
