@@ -135,6 +135,7 @@ test("signup student, mentor and security from a clean backend", async ({
   await fillField(screen, "name", 0, m.name);
   await fillField(screen, "email", 1, m.email);
   await fillField(screen, "password", 2, m.password);
+  await tapText(screen, "Full Name");
   await setYear(screen, "4");
   await tapText(screen, "Register");
   await expectSignupOutcome(screen, "mentor");
