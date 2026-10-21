@@ -101,7 +101,7 @@ const QRPage = () => {
         <View className="flex-1 items-center justify-center">
           <ActivityIndicator size="large" color="#4f46e5" />
         </View>
-      ) : error || !isUsable || !qr?.token ? (
+      ) : !isUsable || !qr?.token ? (
         <View className="flex-1 items-center justify-center px-8">
           <ShieldAlert size={56} color="#f59e0b" />
           <Text className="text-xl font-bold text-gray-800 mt-4 text-center">
@@ -110,8 +110,8 @@ const QRPage = () => {
               : "This gate pass is no longer valid"}
           </Text>
           <Text className="text-gray-500 mt-2 text-center">
-            {error
-              ? error
+            {isUsable
+              ? error || "Please check your connection and try again."
               : displayStatus === "expired"
                 ? `The travel window ended on ${formatDate(
                     pass?.comingDate || pass?.date
@@ -183,6 +183,12 @@ const QRPage = () => {
                 )}
               </TouchableOpacity>
             </View>
+
+            {error ? (
+              <Text className="text-red-500 text-xs mt-2 text-center">
+                {`Could not refresh: ${error}`}
+              </Text>
+            ) : null}
           </View>
         </ScrollView>
       )}
