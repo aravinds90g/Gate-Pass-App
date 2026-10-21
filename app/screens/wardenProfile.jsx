@@ -177,17 +177,11 @@ const WardenProfile = () => {
       if (action === "approve") {
         await api.put(`/gatepass/update/${passId}`, {
           status: "approved",
-          approvedAt: new Date(),
-          approvedBy: "Warden",
-          forwarded: false,
         });
         showActionFeedback("Pass Approved Successfully", true);
       } else if (action === "reject") {
         await api.put(`/gatepass/update/${passId}`, {
           status: "rejected",
-          rejectedAt: new Date(),
-          rejectedBy: "Warden",
-          forwarded: false,
         });
         showActionFeedback("Pass Rejected Successfully", true);
       }

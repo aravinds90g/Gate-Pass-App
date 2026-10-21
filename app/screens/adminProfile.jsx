@@ -176,17 +176,11 @@ const AdminProfile = () => {
       if (action === "approve") {
         await api.put(`/gatepass/update/${passId}`, {
           status: "approved",
-          approvedAt: new Date(),
-          approvedBy: "Principal",
-          forwarded: false,
         });
         showActionFeedback("Pass Approved Successfully", true);
       } else if (action === "reject") {
         await api.put(`/gatepass/update/${passId}`, {
           status: "rejected",
-          rejectedAt: new Date(),
-          rejectedBy: "Principal",
-          forwarded: false,
         });
         showActionFeedback("Pass Rejected Successfully", true);
       }

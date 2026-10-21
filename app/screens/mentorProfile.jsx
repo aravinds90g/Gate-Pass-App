@@ -179,14 +179,11 @@ const MentorProfile = () => {
       if (action === "rejected") {
         await api.put(`/gatepass/update/${passId}`, {
           status: "rejected",
-          rejectedAt: new Date(),
-          rejectedBy: "Mentor",
         });
         showActionFeedback("Pass Rejected Successfully", true);
       } else if (action === "forward") {
         await api.put(`/gatepass/update/${passId}`, {
           forwarded: true,
-          forwardedAt: new Date(),
         });
         showActionFeedback("Pass Forwarded Successfully", true);
       }
