@@ -21,7 +21,7 @@ test("mentor forwards the pending passes", async ({
   const { mentorEmail } = loadFlowAccounts();
   const mentor = { ...ACCOUNTS.mentor, email: mentorEmail };
   await ensureUserAPI(mentor);
-  await loginAs(device, screen, bundleId, mentor, "Mentor Dashboard");
+  await loginAs(device, screen, bundleId!, mentor, "Mentor Dashboard");
 
   // Idempotent: if a previous run already forwarded everything, the
   // list is empty and there is nothing to do.

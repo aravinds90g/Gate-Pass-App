@@ -301,6 +301,15 @@ export async function tapLogin(screen: any) {
   await screen.getByText("Login").nth(1).tap();
 }
 
+export function expectVisible(
+  locator: any,
+  options?: { timeout?: number }
+) {
+  // mobilewright's `expect()` returns ValueAssertions, whose type omits the
+  // element matchers it actually exposes at runtime.
+  return (expect(locator) as any).toBeVisible(options);
+}
+
 /**
  * Fresh install -> launch -> login as the given account (3 attempts:
  * mistyped chars or swallowed taps are retried) -> assert landing text.
@@ -342,5 +351,5 @@ export async function loginAs(
     }
   }
 
-  await expect(screen.getByText(landingText)).toBeVisible({ timeout: 60_000 });
+  await expectVisible(screen.getByText(landingText), { timeout: 60_000 });
 }

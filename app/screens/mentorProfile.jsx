@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -9,10 +9,8 @@ import {
   Animated,
   Easing,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { Dimensions } from "react-native";
-import axios from "axios";
 import {
   XCircle,
   Forward,
@@ -25,6 +23,9 @@ import {
   ClipboardList,
   CheckCircle,
 } from "lucide-react-native";
+import { api, apiErrorMessage } from "../../lib/api";
+import { clearSession, getSession, routeForRole } from "../../lib/session";
+import { daysBetween, formatDate } from "../../lib/dates";
 
 const FeedbackMessage = ({ actionFeedback }) => {
   const slideAnim = useRef(new Animated.Value(0)).current; // Start from 0 for center
@@ -79,7 +80,7 @@ const FeedbackMessage = ({ actionFeedback }) => {
 
       return () => clearTimeout(timer);
     }
-  }, [actionFeedback]);
+  }, [actionFeedback, slideAnim, opacityAnim, scaleAnim]);
 
   if (!actionFeedback) return null;
 
@@ -132,42 +133,42 @@ const MentorProfile = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [actionFeedback, setActionFeedback] = useState(null);
 
-  const fetchPasses = async () => {
+  const fetchPasses = useCallback(async () => {
     setRefreshing(true);
     try {
-      const userDataString = await AsyncStorage.getItem("userData");
-      if (!userDataString) throw new Error("User data not found");
+      const { token, user: userData } = await getSession();
+      if (!token || !userData) {
+        router.replace("/auth/login");
+        return;
+      }
+      if (userData.role !== "mentor") {
+        router.replace(routeForRole(userData.role));
+        return;
+      }
 
-      const userData = JSON.parse(userDataString);
       const { dept, year } = userData;
 
-      if (!dept || !year) throw new Error("Department or year not found");
+      if (!dept || !year) {
+        throw new Error("Department or year not found on your account");
+      }
 
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) throw new Error("Authentication token not found");
-
-      const response = await axios.get(
-        `https://gate-pass-backend-2ccd.onrender.com/api/mentor/deptyear?dept=${dept}&year=${year}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
-      setStudentPasses(response.data);
+      const response = await api.get("/mentor/deptyear", {
+        params: { dept, year },
+      });
+      setStudentPasses(Array.isArray(response.data) ? response.data : []);
       setError(null);
     } catch (err) {
       console.error("Error fetching passes:", err);
-      setError(err.message);
+      setError(apiErrorMessage(err, "Failed to load student passes."));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     fetchPasses();
-  }, []);
+  }, [fetchPasses]);
 
   const showActionFeedback = (message, isSuccess) => {
     setActionFeedback({ message, isSuccess });
@@ -175,29 +176,18 @@ const MentorProfile = () => {
 
   const handleAction = async (passId, action) => {
     try {
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) throw new Error("Authentication token not found");
-
-      const config = {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      };
-
       if (action === "rejected") {
-        await axios.put(
-          `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/update/${passId}`,
-          { status: "rejected", rejectedAt: new Date(), rejectedBy: "Mentor" },
-          config
-        );
+        await api.put(`/gatepass/update/${passId}`, {
+          status: "rejected",
+          rejectedAt: new Date(),
+          rejectedBy: "Mentor",
+        });
         showActionFeedback("Pass Rejected Successfully", true);
       } else if (action === "forward") {
-        await axios.put(
-          `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/update/${passId}`,
-          { forwarded: true, forwardedAt: new Date() },
-          config
-        );
+        await api.put(`/gatepass/update/${passId}`, {
+          forwarded: true,
+          forwardedAt: new Date(),
+        });
         showActionFeedback("Pass Forwarded Successfully", true);
       }
 
@@ -205,11 +195,11 @@ const MentorProfile = () => {
     } catch (error) {
       console.error("Error in handleAction:", error);
       showActionFeedback(
-        error.response?.data?.message || `Failed to ${action} pass`,
+        apiErrorMessage(error, `Failed to ${action} pass`),
         false
       );
       if (error.response?.status === 401) {
-        await AsyncStorage.clear();
+        await clearSession();
         router.replace("/auth/login");
       }
     }
@@ -217,7 +207,7 @@ const MentorProfile = () => {
 
   const handleLogout = async () => {
     try {
-      await AsyncStorage.clear();
+      await clearSession();
       router.replace("/auth/login");
     } catch (error) {
       console.error("Logout error:", error);
@@ -266,10 +256,8 @@ const MentorProfile = () => {
           <View>
             <Text className="text-xs text-slate-500 mx-4">Dates</Text>
             <Text className="text-sm text-slate-700 mx-4">
-              {new Date(item.date).toLocaleDateString()} -{" "}
-              {item.comingDate
-                ? new Date(item.comingDate).toLocaleDateString()
-                : "N/A"}
+              {formatDate(item.date)} -{" "}
+              {item.comingDate ? formatDate(item.comingDate) : "N/A"}
             </Text>
           </View>
         </View>
@@ -280,10 +268,7 @@ const MentorProfile = () => {
             <Text className="text-xs text-slate-500 mx-4">Duration</Text>
             <Text className="text-sm text-slate-700 mx-4">
               {item.comingDate && item.date
-                ? Math.ceil(
-                    (new Date(item.comingDate) - new Date(item.date)) /
-                      (1000 * 60 * 60 * 24)
-                  ) + " days"
+                ? `${daysBetween(item.date, item.comingDate)} days`
                 : "N/A"}
             </Text>
           </View>
@@ -304,13 +289,15 @@ const MentorProfile = () => {
           <View>
             <Text className="text-xs text-slate-500 mx-4">Reason</Text>
             <Text className="text-sm text-slate-700 mx-4">
-              {`(${item.reasonForGoingHome})  ${item.reason}`}
+              {[item.reasonForGoingHome, item.reason]
+                .filter(Boolean)
+                .join(" • ")}
             </Text>
           </View>
         </View>
       </View>
 
-      {item.status === "pending" && (
+      {item.status === "pending" && !item.forwarded && (
         <View className="flex-row justify-between mt-4 gap-3">
           <TouchableOpacity
             className="flex-1 flex-row items-center justify-center py-2.5 rounded-lg border border-red-100 bg-red-50"
@@ -387,6 +374,8 @@ const MentorProfile = () => {
                 onPress={handleLogout}
                 className="p-2 rounded-xl bg-red-50"
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Log out"
               >
                 <LogOut size={24} color="#ef4444" />
               </TouchableOpacity>
@@ -398,6 +387,15 @@ const MentorProfile = () => {
                 Number of Passes: {studentPasses.length}
               </Text>
             </View>
+
+            {error ? (
+              <View className="bg-red-50 border border-red-100 rounded-xl p-4 mx-5 mt-4">
+                <Text className="text-red-700 text-sm mb-2">{error}</Text>
+                <TouchableOpacity onPress={fetchPasses} className="self-start">
+                  <Text className="text-red-700 font-semibold">Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </>
         }
         ListEmptyComponent={

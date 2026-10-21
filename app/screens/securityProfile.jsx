@@ -7,9 +7,9 @@ import {
 } from "react-native";
 import { MaterialIcons, Ionicons, FontAwesome } from "@expo/vector-icons";
 import { router } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
-import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
+import Animated, { FadeInDown } from "react-native-reanimated";
+import { clearSession, getSession, routeForRole } from "../../lib/session";
 
 const SecurityHome = () => {
   const [user, setUser] = useState(null);
@@ -18,10 +18,21 @@ const SecurityHome = () => {
   useEffect(() => {
     const fetchUserData = async () => {
       try {
-        const userData = await AsyncStorage.getItem("userData");
-        if (userData) setUser(JSON.parse(userData));
+        const { user: storedUser } = await getSession();
+        if (!storedUser) {
+          router.replace("/auth/login");
+          return;
+        }
+        // This portal belongs to security staff only; other roles are sent
+        // back to their own dashboard instead of seeing it.
+        if (storedUser.role !== "security") {
+          router.replace(routeForRole(storedUser.role));
+          return;
+        }
+        setUser(storedUser);
       } catch (error) {
         console.error("Failed to fetch user data", error);
+        router.replace("/auth/login");
       } finally {
         setLoading(false);
       }
@@ -32,8 +43,7 @@ const SecurityHome = () => {
 
   const handleLogout = async () => {
     try {
-      await AsyncStorage.removeItem("userToken");
-      await AsyncStorage.removeItem("userData");
+      await clearSession();
       router.replace("/auth/login");
     } catch (error) {
       console.error("Logout failed", error);
@@ -101,7 +111,9 @@ const SecurityHome = () => {
 
           <TouchableOpacity
             className="flex-row items-center justify-center bg-white py-4 rounded-xl"
-            onPress={() => router.push("screens/profile/qrScanner")}
+            onPress={() => router.push("/screens/profile/qrScanner")}
+            accessibilityRole="button"
+            accessibilityLabel="Launch QR code scanner"
           >
             <MaterialIcons name="qr-code-scanner" size={24} color="#4f46e5" />
             <Text className="text-indigo-600 font-semibold ml-2">
@@ -118,6 +130,8 @@ const SecurityHome = () => {
           <TouchableOpacity
             onPress={handleLogout}
             className="flex-row items-center justify-center p-4 rounded-xl border border-red-500"
+            accessibilityRole="button"
+            accessibilityLabel="Log out"
           >
             <Ionicons name="log-out-outline" size={24} color="red" />
             <Text className="text-red-500 font-semibold ml-2">Logout</Text>

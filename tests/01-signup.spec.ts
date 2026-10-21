@@ -7,14 +7,16 @@ import {
   fillField,
   tapText,
   saveFlowAccounts,
+  expectVisible,
 } from "./helpers";
 
 /**
- * File 1/5 — first-use setup: create security + mentor + student.
+ * File 1/5 — first-use setup: create mentor + student through the UI.
  * Every run uses FRESH timestamped emails, so stale backend state
  * (e.g. an account created with the wrong role) can never poison the
- * flow. The credentials are saved for files 02-05. Admin + the legacy
- * smoke-test student are ensured via API (role-verified on duplicates).
+ * flow. The credentials are saved for files 02-05. Admin, security and
+ * the legacy smoke-test student are ensured via API: institutional roles
+ * are no longer self-service on the registration screen.
  */
 
 async function setRole(screen: any, current: string, next: string) {
@@ -64,12 +66,10 @@ async function gotoRegister(screen: any) {
     await tapText(screen, "Login here");
   }
   await tapText(screen, "Sign Up");
-  await expect(screen.getByText("Create Account")).toBeVisible({
-    timeout: 15_000,
-  });
+  await expectVisible(screen.getByText("Create Account"), { timeout: 15_000 });
 }
 
-test("signup student, mentor and security from a clean backend", async ({
+test("signup student and mentor from a clean backend", async ({
   device,
   screen,
   bundleId,
@@ -98,20 +98,20 @@ test("signup student, mentor and security from a clean backend", async ({
     ...ACCOUNTS.security,
     email: `flow.security.${ts}@gmail.com`,
   };
+  // Security is staff: provisioned through the API, not the public form.
+  await ensureUserAPI(security);
   saveFlowAccounts({
     studentEmail: student.email,
     mentorEmail: mentor.email,
     securityEmail: security.email,
   });
 
-  await freshInstall(device, bundleId);
+  await freshInstall(device, bundleId!);
   await openApp({ device, screen, bundleId });
 
   // Reach the Register screen from Login.
   await tapText(screen, "Sign Up");
-  await expect(screen.getByText("Create Account")).toBeVisible({
-    timeout: 15_000,
-  });
+  await expectVisible(screen.getByText("Create Account"), { timeout: 15_000 });
 
   // --- Student (default role + default ECE dept; year 1 -> 4) ---
   // Fill bottom-up so every target stays above the open keyboard.
@@ -128,7 +128,7 @@ test("signup student, mentor and security from a clean backend", async ({
   await tapText(screen, "Register");
   await expectSignupOutcome(screen, "student");
 
-  // --- Mentor ---
+  // --- Mentor only; staff roles are not offered on the public form ---
   await gotoRegister(screen);
   await setRole(screen, "Student", "Mentor");
   const m = mentor;
@@ -139,17 +139,4 @@ test("signup student, mentor and security from a clean backend", async ({
   await setYear(screen, "4");
   await tapText(screen, "Register");
   await expectSignupOutcome(screen, "mentor");
-
-  // --- Security ---
-  await gotoRegister(screen);
-  await setRole(screen, "Student", "Security");
-  const sec = security;
-  await fillField(screen, "name", 0, sec.name);
-  await fillField(screen, "email", 1, sec.email);
-  await fillField(screen, "password", 2, sec.password);
-  // No year picker for security: dismiss the keyboard explicitly or it
-  // covers the Register button and the tap never submits.
-  await tapText(screen, "Full Name");
-  await tapText(screen, "Register");
-  await expectSignupOutcome(screen, "security");
 });

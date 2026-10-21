@@ -15,9 +15,18 @@ import {
   Ionicons,
   Feather,
 } from "@expo/vector-icons";
-import axios from "axios";
-import dayjs from "dayjs";
+import { api, apiErrorMessage } from "../../../../lib/api";
+import {
+  formatDate,
+  formatDateTime,
+  getPassDisplayStatus,
+} from "../../../../lib/dates";
 
+/**
+ * Static classes only: NativeWind compiles class names at build time, so
+ * `bg-${color}-100` produced no styles unless an identical literal happened
+ * to appear elsewhere in the file.
+ */
 const statusConfig = {
   pending: {
     bg: "bg-amber-100",
@@ -25,8 +34,8 @@ const statusConfig = {
     icon: { name: "hourglass-empty", color: "#f59e0b" },
     border: "border-amber-300",
     headerBg: "bg-amber-100",
-    cardBg: "bg-amber-50",
-    accent: "amber",
+    panelBg: "bg-amber-100",
+    panelText: "text-amber-800",
   },
   approved: {
     bg: "bg-blue-100",
@@ -34,8 +43,8 @@ const statusConfig = {
     icon: { name: "check-circle", color: "#3b82f6" },
     border: "border-blue-300",
     headerBg: "bg-blue-100",
-    cardBg: "bg-blue-50",
-    accent: "blue",
+    panelBg: "bg-blue-100",
+    panelText: "text-blue-800",
   },
   active: {
     bg: "bg-green-100",
@@ -43,8 +52,8 @@ const statusConfig = {
     icon: { name: "check-circle", color: "#10b981" },
     border: "border-green-300",
     headerBg: "bg-green-100",
-    cardBg: "bg-green-50",
-    accent: "green",
+    panelBg: "bg-green-100",
+    panelText: "text-green-800",
   },
   rejected: {
     bg: "bg-red-100",
@@ -52,8 +61,8 @@ const statusConfig = {
     icon: { name: "cancel", color: "#f43f5e" },
     border: "border-red-300",
     headerBg: "bg-red-100",
-    cardBg: "bg-red-50",
-    accent: "red",
+    panelBg: "bg-red-100",
+    panelText: "text-red-800",
   },
   expired: {
     bg: "bg-gray-200",
@@ -61,10 +70,12 @@ const statusConfig = {
     icon: { name: "timer-off", color: "#64748b" },
     border: "border-gray-300",
     headerBg: "bg-gray-100",
-    cardBg: "bg-gray-50",
-    accent: "gray",
+    panelBg: "bg-gray-100",
+    panelText: "text-gray-800",
   },
 };
+
+const DEFAULT_STATUS = "pending";
 
 const GatePassDetails = () => {
   const { id } = useLocalSearchParams();
@@ -73,29 +84,32 @@ const GatePassDetails = () => {
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const fetchPass = async () => {
+  const fetchPass = useCallback(async () => {
+    if (!id) {
+      setError("Missing gate pass id");
+      setLoading(false);
+      return;
+    }
     try {
-      const res = await axios.get(
-        `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/passdata/${id}`
-      );
+      const res = await api.get(`/gatepass/passdata/${id}`);
       setPass(res.data);
       setError(null);
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to fetch pass details");
+      setError(apiErrorMessage(err, "Failed to fetch pass details"));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [id]);
 
   useEffect(() => {
     fetchPass();
-  }, [id]);
+  }, [fetchPass]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     fetchPass();
-  }, []);
+  }, [fetchPass]);
 
   if (loading && !refreshing) {
     return (
@@ -113,6 +127,7 @@ const GatePassDetails = () => {
         <Pressable
           onPress={() => router.back()}
           className="mt-6 px-6 py-2 bg-indigo-500 rounded-lg"
+          accessibilityRole="button"
         >
           <Text className="text-white font-medium">Go Back</Text>
         </Pressable>
@@ -128,13 +143,13 @@ const GatePassDetails = () => {
     );
   }
 
-  const status = statusConfig[pass.status] || statusConfig.default;
-  const accentColor = status.accent;
+  const displayStatus = getPassDisplayStatus(pass) ?? DEFAULT_STATUS;
+  const status = statusConfig[displayStatus] ?? statusConfig[DEFAULT_STATUS];
 
-  const showQRButton = pass.status === "active" || pass.status === "approved";
-  // const isExpired =
-  //   pass.status === "expired" ||
-  //   (pass.comingDate && dayjs(pass.comingDate).isBefore(dayjs()));
+  // An approved pass whose travel window has passed must not produce a
+  // still-scannable QR code.
+  const showQRButton =
+    displayStatus === "active" || displayStatus === "approved";
 
   return (
     <View className="flex-1 bg-gray-50">
@@ -156,7 +171,7 @@ const GatePassDetails = () => {
             />
           </View>
           <Text className={`text-2xl font-bold ${status.text} mb-1`}>
-            {pass.status.toUpperCase()}
+            {displayStatus.toUpperCase()}
           </Text>
           <Text className="text-gray-600 mb-5">
             Gate Pass #{pass._id.slice(-6).toUpperCase()}
@@ -180,21 +195,13 @@ const GatePassDetails = () => {
                   {pass.name}
                 </Text>
                 <View className="flex-row flex-wrap mt-2">
-                  <View
-                    className={`px-2 py-1 rounded-md bg-${accentColor}-100 mr-2 mb-2`}
-                  >
-                    <Text
-                      className={`text-xs font-medium text-${accentColor}-800`}
-                    >
+                  <View className={`px-2 py-1 rounded-md ${status.panelBg} mr-2 mb-2`}>
+                    <Text className={`text-xs font-medium ${status.panelText}`}>
                       Roll: {pass.rollNo}
                     </Text>
                   </View>
-                  <View
-                    className={`px-2 py-1 rounded-md bg-${accentColor}-100`}
-                  >
-                    <Text
-                      className={`text-xs font-medium text-${accentColor}-800`}
-                    >
+                  <View className={`px-2 py-1 rounded-md ${status.panelBg}`}>
+                    <Text className={`text-xs font-medium ${status.panelText}`}>
                       Dept: {pass.dept}
                     </Text>
                   </View>
@@ -206,30 +213,30 @@ const GatePassDetails = () => {
           {/* Pass Details */}
           <View className="p-6 bg-white border-t border-gray-100">
             <View
-              className={`flex-row items-center mb-4 px-3 py-2 rounded-lg bg-${accentColor}-100`}
+              className={`flex-row items-center mb-4 px-3 py-2 rounded-lg ${status.panelBg}`}
             >
               <Ionicons
                 name="document-text-outline"
                 size={20}
                 color={status.icon.color}
               />
-              <Text className={`ml-2 font-bold text-${accentColor}-800`}>
+              <Text className={`ml-2 font-bold ${status.panelText}`}>
                 PASS DETAILS
               </Text>
             </View>
 
-            <View className="space-y-4">
-              <View className="flex-row justify-between items-center bg-gray-50 p-3 rounded-lg">
+            <View>
+              <View className="flex-row justify-between items-center bg-gray-50 p-3 rounded-lg mb-4">
                 <View className="flex-row items-center">
                   <Feather name="calendar" size={18} color="#64748b" />
                   <Text className="ml-2 text-gray-500">Departure Date</Text>
                 </View>
                 <Text className="font-bold text-gray-800">
-                  {dayjs(pass.date).format("DD MMM YYYY")}
+                  {formatDate(pass.date)}
                 </Text>
               </View>
 
-              <View className="flex-row justify-between items-center bg-gray-50 p-3 rounded-lg">
+              <View className="flex-row justify-between items-center bg-gray-50 p-3 rounded-lg mb-4">
                 <View className="flex-row items-center">
                   <Feather name="clock" size={18} color="#64748b" />
                   <Text className="ml-2 text-gray-500">Departure Time</Text>
@@ -248,13 +255,13 @@ const GatePassDetails = () => {
               </View>
 
               {pass.comingDate && (
-                <View className="flex-row justify-between items-center bg-gray-50 p-3 rounded-lg">
+                <View className="flex-row justify-between items-center bg-gray-50 p-3 rounded-lg mt-4">
                   <View className="flex-row items-center">
                     <Feather name="home" size={18} color="#64748b" />
                     <Text className="ml-2 text-gray-500">Return Date</Text>
                   </View>
                   <Text className="font-bold text-gray-800">
-                    {dayjs(pass.comingDate).format("DD MMM YYYY")}
+                    {formatDate(pass.comingDate)}
                   </Text>
                 </View>
               )}
@@ -264,42 +271,42 @@ const GatePassDetails = () => {
           {/* Reason Section */}
           <View className="p-6 bg-white border-t border-gray-100">
             <View
-              className={`flex-row items-center mb-4 px-3 py-2 rounded-lg bg-${accentColor}-100`}
+              className={`flex-row items-center mb-4 px-3 py-2 rounded-lg ${status.panelBg}`}
             >
               <Ionicons
                 name="help-circle-outline"
                 size={20}
                 color={status.icon.color}
               />
-              <Text className={`ml-2 font-bold text-${accentColor}-800`}>
+              <Text className={`ml-2 font-bold ${status.panelText}`}>
                 REASON
               </Text>
             </View>
-            <View className={`p-4 rounded-lg bg-${accentColor}-100`}>
-              <Text className={`font-medium text-${accentColor}-800`}>
+            <View className={`p-4 rounded-lg ${status.panelBg}`}>
+              <Text className={`font-medium ${status.panelText}`}>
                 {pass.reason === "Others" ? pass.customReason : pass.reason}
                 {pass.reason === "Home"
-                  ? `  ( ${pass.reasonForGoingHome} )`
+                  ? `  ( ${pass.reasonForGoingHome ?? ""} )`
                   : ""}
               </Text>
             </View>
           </View>
 
-          {pass.status === "expired" ? (
+          {displayStatus === "expired" && (
             <View className="p-6 bg-white border-t border-gray-100">
               <View
-                className={`flex-row items-center mb-4 px-3 py-2 rounded-lg bg-${accentColor}-100`}
+                className={`flex-row items-center mb-4 px-3 py-2 rounded-lg ${status.panelBg}`}
               >
                 <Ionicons
                   name="information-circle-outline"
                   size={20}
                   color={status.icon.color}
                 />
-                <Text className={`ml-2 font-bold text-${accentColor}-800`}>
+                <Text className={`ml-2 font-bold ${status.panelText}`}>
                   Pass Status Details
                 </Text>
               </View>
-              <View className={`p-4 rounded-lg bg-${accentColor}-100`}>
+              <View className={`p-4 rounded-lg ${status.panelBg}`}>
                 {pass.activedAt && (
                   <View className="flex-row items-center mb-2">
                     <Ionicons
@@ -307,19 +314,8 @@ const GatePassDetails = () => {
                       size={16}
                       color={status.icon.color}
                     />
-                    <Text
-                      className={`ml-2 text-sm font-medium text-${accentColor}-800`}
-                    >
-                      {`Activated: ${new Date(pass.activedAt).toLocaleString(
-                        "en-US",
-                        {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }
-                      )}`}
+                    <Text className={`ml-2 text-sm font-medium ${status.panelText}`}>
+                      {`Activated: ${formatDateTime(pass.activedAt)}`}
                     </Text>
                   </View>
                 )}
@@ -330,46 +326,40 @@ const GatePassDetails = () => {
                       size={16}
                       color={status.icon.color}
                     />
-                    <Text
-                      className={`ml-2 text-sm font-medium text-${accentColor}-800`}
-                    >
-                      {`Expired At: ${new Date(pass.expiredAt).toLocaleString(
-                        "en-US",
-                        {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        }
-                      )}`}
+                    <Text className={`ml-2 text-sm font-medium ${status.panelText}`}>
+                      {`Expired At: ${formatDateTime(pass.expiredAt)}`}
                     </Text>
                   </View>
                 )}
+                {!pass.activedAt && !pass.expiredAt && (
+                  <Text className={`text-sm font-medium ${status.panelText}`}>
+                    {`Travel window ended on ${formatDate(
+                      pass.comingDate || pass.date
+                    )}`}
+                  </Text>
+                )}
               </View>
             </View>
-          ) : (
-            ""
           )}
 
           {/* Parent Contact (if applicable) */}
           {(pass.reason === "Home" || pass.parentContact) && (
             <View className="p-6 bg-white border-t border-gray-100">
               <View
-                className={`flex-row items-center mb-4 px-3 py-2 rounded-lg bg-${accentColor}-100`}
+                className={`flex-row items-center mb-4 px-3 py-2 rounded-lg ${status.panelBg}`}
               >
                 <Ionicons
                   name="people-outline"
                   size={20}
                   color={status.icon.color}
                 />
-                <Text className={`ml-2 font-bold text-${accentColor}-800`}>
+                <Text className={`ml-2 font-bold ${status.panelText}`}>
                   PARENT CONTACT
                 </Text>
               </View>
-              <View className={`p-4 rounded-lg bg-${accentColor}-100`}>
-                <Text className={`font-bold text-${accentColor}-800`}>
-                  {pass.parentName}
+              <View className={`p-4 rounded-lg ${status.panelBg}`}>
+                <Text className={`font-bold ${status.panelText}`}>
+                  {pass.parentName || "Not provided"}
                 </Text>
                 <View className="flex-row items-center mt-2">
                   <MaterialIcons
@@ -377,8 +367,8 @@ const GatePassDetails = () => {
                     size={20}
                     color={status.icon.color}
                   />
-                  <Text className={`ml-2 font-medium text-${accentColor}-800`}>
-                    {pass.parentContact}
+                  <Text className={`ml-2 font-medium ${status.panelText}`}>
+                    {pass.parentContact || "Not provided"}
                   </Text>
                 </View>
               </View>
@@ -386,24 +376,24 @@ const GatePassDetails = () => {
           )}
 
           {/* Approval/Rejection Info */}
-          {(pass.status === "approved" ||
-            pass.status === "rejected" ||
-            pass.status === "active") && (
+          {(displayStatus === "approved" ||
+            displayStatus === "rejected" ||
+            displayStatus === "active") && (
             <View className="p-6 bg-white border-t border-gray-100">
               <View
-                className={`flex-row items-center mb-4 px-3 py-2 rounded-lg bg-${accentColor}-100`}
+                className={`flex-row items-center mb-4 px-3 py-2 rounded-lg ${status.panelBg}`}
               >
                 <Ionicons
                   name={
-                    pass.status === "rejected"
+                    displayStatus === "rejected"
                       ? "close-circle-outline"
                       : "checkmark-circle-outline"
                   }
                   size={20}
                   color={status.icon.color}
                 />
-                <Text className={`ml-2 font-bold text-${accentColor}-800`}>
-                  {pass.status === "rejected" ? "REJECTION" : "APPROVAL"}{" "}
+                <Text className={`ml-2 font-bold ${status.panelText}`}>
+                  {displayStatus === "rejected" ? "REJECTION" : "APPROVAL"}{" "}
                   DETAILS
                 </Text>
               </View>
@@ -413,7 +403,7 @@ const GatePassDetails = () => {
                 >
                   <FontAwesome
                     name={
-                      pass.status === "rejected"
+                      displayStatus === "rejected"
                         ? "times-circle"
                         : "check-circle"
                     }
@@ -427,9 +417,9 @@ const GatePassDetails = () => {
                     {pass.approvedBy || pass.rejectedBy || "System"}
                   </Text>
                   <Text className="text-gray-500 text-sm mt-1">
-                    {dayjs(
+                    {formatDateTime(
                       pass.approvedAt || pass.rejectedAt || pass.activedAt
-                    ).format("DD MMM YYYY, hh:mm A")}
+                    )}
                   </Text>
                 </View>
               </View>
@@ -444,10 +434,10 @@ const GatePassDetails = () => {
           } p-6 shadow-sm`}
         >
           <View
-            className={`flex-row items-center mb-4 px-3 py-2 rounded-lg bg-${accentColor}-100`}
+            className={`flex-row items-center mb-4 px-3 py-2 rounded-lg ${status.panelBg}`}
           >
             <Ionicons name="time-outline" size={20} color={status.icon.color} />
-            <Text className={`ml-2 font-bold text-${accentColor}-800`}>
+            <Text className={`ml-2 font-bold ${status.panelText}`}>
               APPLICATION TIME
             </Text>
           </View>
@@ -457,7 +447,7 @@ const GatePassDetails = () => {
               <Text className="ml-2 text-gray-500">Applied on</Text>
             </View>
             <Text className="font-bold text-gray-800">
-              {dayjs(pass.appliedAt).format("DD MMM YYYY, hh:mm A")}
+              {formatDateTime(pass.appliedAt)}
             </Text>
           </View>
         </View>
@@ -467,23 +457,21 @@ const GatePassDetails = () => {
           <View className="absolute bottom-6 right-0 left-0 items-center">
             <TouchableOpacity
               className={`w-11/12 py-4 ${
-                pass.status === "approved" ? "bg-blue-500" : "bg-green-500"
+                displayStatus === "approved" ? "bg-blue-500" : "bg-green-500"
               } rounded-full flex-row items-center justify-center shadow-xl`}
               onPress={() =>
                 router.push({
                   pathname: "/screens/profile/qrCode",
-                  params: {
-                    id: pass._id,
-                  },
+                  params: { id: pass._id },
                 })
               }
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Show gate pass QR code"
             >
               <MaterialIcons name="qr-code-scanner" size={24} color="white" />
               <Text className="text-white font-bold text-lg ml-2">
-                {pass.status === "approved"
-                  ? "Generate QR Code"
-                  : "Generate QR Code"}
+                Generate QR Code
               </Text>
             </TouchableOpacity>
           </View>

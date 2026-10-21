@@ -6,13 +6,13 @@ import {
   ScrollView,
   RefreshControl,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { useState, useCallback, useEffect } from "react";
 import { useForm, Controller } from "react-hook-form";
 import RNPickerSelect from "react-native-picker-select";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import axios from "axios";
 import { useRouter } from "expo-router";
 import {
   Calendar,
@@ -23,10 +23,29 @@ import {
   Phone,
   ChevronLeft,
 } from "lucide-react-native";
+import { api, apiErrorMessage } from "../../../lib/api";
+import { getSession } from "../../../lib/session";
+import {
+  parsePassDate,
+  timeStringToDate,
+  toLocalDateString,
+} from "../../../lib/dates";
+
+const emptyForm = (email = "") => ({
+  email,
+  date: "",
+  time: "",
+  destination: "",
+  reason: "",
+  customReason: "",
+  comingDate: "",
+  parentName: "",
+  parentContact: "",
+  reasonForGoingHome: "",
+});
 
 export default function GatePass() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
@@ -34,121 +53,135 @@ export default function GatePass() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [showReturnDatePicker, setShowReturnDatePicker] = useState(false);
 
-  const handleDateChange = (event, selectedDate) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      const formattedDate = selectedDate.toISOString().split("T")[0];
-      setValue("date", formattedDate);
-    }
-  };
-
-  const handleTimeChange = (event, selectedTime) => {
-    setShowTimePicker(false);
-    if (selectedTime) {
-      const hours = selectedTime.getHours();
-      const minutes = selectedTime.getMinutes();
-      const ampm = hours >= 12 ? "PM" : "AM";
-      const formattedHours = hours % 12 || 12;
-      const formattedTime = `${formattedHours}:${minutes
-        .toString()
-        .padStart(2, "0")} ${ampm}`;
-      setValue("time", formattedTime);
-    }
-  };
-
-  const handleReturnDateChange = (event, selectedDate) => {
-    setShowReturnDatePicker(false);
-    if (selectedDate) {
-      const formattedDate = selectedDate.toISOString().split("T")[0];
-      setValue("comingDate", formattedDate);
-    }
-  };
-
-  const getUserData = async () => {
-    try {
-      const jsonValue = await AsyncStorage.getItem("userData");
-      return jsonValue != null ? JSON.parse(jsonValue) : null;
-    } catch (e) {
-      console.error("Error reading user data from AsyncStorage:", e);
-      return null;
-    }
-  };
-
-  useEffect(() => {
-    const fetchUser = async () => {
-      const user = await getUserData();
-      setEmail(user.email);
-      setValue("email", user.email);
-    };
-    fetchUser();
-  }, []);
-
   const {
     control,
     handleSubmit,
     watch,
     reset,
     setValue,
-    formState: { errors },
-  } = useForm({
-    defaultValues: {
-      email: email,
-      date: "",
-      time: "",
-      destination: "",
-      reason: "",
-      customReason: "",
-      comingDate: "",
-      parentName: "",
-      parentContact: "",
-    },
-  });
+    setError,
+    clearErrors,
+    getValues,
+    formState: { errors, isSubmitting },
+  } = useForm({ defaultValues: emptyForm() });
 
   const reasonType = watch("reason");
+  const dateValue = watch("date");
+  const timeValue = watch("time");
+  const comingDateValue = watch("comingDate");
+
+  useEffect(() => {
+    const loadUser = async () => {
+      const { user } = await getSession();
+      if (!user) {
+        router.replace("/auth/login");
+        return;
+      }
+      setValue("email", user.email ?? "");
+    };
+    loadUser();
+  }, [router, setValue]);
+
+  const handleDateChange = (event, selectedDate) => {
+    setShowDatePicker(false);
+    if (event?.type === "dismissed" || !selectedDate) return;
+    clearErrors("date");
+    setValue("date", toLocalDateString(selectedDate), {
+      shouldValidate: true,
+    });
+  };
+
+  const handleTimeChange = (event, selectedTime) => {
+    setShowTimePicker(false);
+    if (event?.type === "dismissed" || !selectedTime) return;
+    clearErrors("time");
+    const hours = selectedTime.getHours();
+    const minutes = selectedTime.getMinutes();
+    const ampm = hours >= 12 ? "PM" : "AM";
+    const formattedHours = hours % 12 || 12;
+    const formattedTime = `${formattedHours}:${minutes
+      .toString()
+      .padStart(2, "0")} ${ampm}`;
+    setValue("time", formattedTime, { shouldValidate: true });
+  };
+
+  const handleReturnDateChange = (event, selectedDate) => {
+    setShowReturnDatePicker(false);
+    if (event?.type === "dismissed" || !selectedDate) return;
+    clearErrors("comingDate");
+    setValue("comingDate", toLocalDateString(selectedDate), {
+      shouldValidate: true,
+    });
+  };
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    reset();
     setSubmitted(false);
-    setTimeout(() => setRefreshing(false), 1000);
-  }, [reset]);
+    // Keep the signed-in student's email: resetting to the mount-time
+    // defaults used to wipe it, producing passes nobody could find.
+    reset(emptyForm(getValues("email")));
+    setTimeout(() => setRefreshing(false), 500);
+  }, [getValues, reset]);
 
   const onSubmit = async (data) => {
-    try {
-      const response = await axios.post(
-        "https://gate-pass-backend-2ccd.onrender.com/api/gatepass/apply",
-        data
-      );
-      setSubmitted(true);
-
-      // Reset form while keeping the email and clearing other fields
-      reset({
-        email: email, // Keep the email
-        date: "",
-        time: "",
-        destination: "",
-        reason: "Others", // Set to null instead of empty string
-        customReason: "",
-        comingDate: "",
-        parentName: "",
-        parentContact: "",
-        reasonForGoingHome: "",
+    let valid = true;
+    if (!data.date) {
+      setError("date", { type: "required", message: "Leaving date is required" });
+      valid = false;
+    }
+    if (!data.time) {
+      setError("time", { type: "required", message: "Leaving time is required" });
+      valid = false;
+    }
+    if (data.reason === "Home" && !data.comingDate) {
+      setError("comingDate", {
+        type: "required",
+        message: "Return date is required",
       });
+      valid = false;
+    }
+    if (!valid) return;
 
+    const payload = {
+      ...data,
+      email: data.email || getValues("email"),
+      reason: data.reason === "Others" ? "Others" : data.reason,
+    };
+
+    if (!payload.email) {
+      Alert.alert("Session expired", "Please log in again.");
+      router.replace("/auth/login");
+      return;
+    }
+
+    try {
+      await api.post("/gatepass/apply", payload);
+      setSubmitted(true);
+      reset(emptyForm(payload.email));
       setTimeout(() => setSubmitted(false), 3000);
     } catch (error) {
       Alert.alert(
         "Error",
-        error.response?.data?.message || "Something went wrong."
+        apiErrorMessage(error, "Could not submit your gate pass.")
       );
     }
   };
 
+  const busy = isSubmitting;
+
   return (
-    <View className="flex-1 bg-gray-50">
+    <KeyboardAvoidingView
+      className="flex-1 bg-gray-50"
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       {/* Header */}
       <View className="bg-white px-5 py-4 flex-row items-center border-b border-gray-200">
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity
+          onPress={() => router.back()}
+          className="mr-4"
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <ChevronLeft size={24} color="#4B5563" />
         </TouchableOpacity>
         <Text className="text-xl font-bold text-gray-800">New Gate Pass</Text>
@@ -156,6 +189,8 @@ export default function GatePass() {
 
       <ScrollView
         className="flex-1 bg-gray-50"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -170,7 +205,10 @@ export default function GatePass() {
           </View>
 
           {submitted && (
-            <View className="bg-green-50 border-l-4 border-green-500 p-4 mb-6 rounded-r-lg">
+            <View
+              className="bg-green-50 border-l-4 border-green-500 p-4 mb-6 rounded-r-lg"
+              accessibilityLiveRegion="polite"
+            >
               <Text className="text-green-800 font-medium">
                 Gate pass submitted successfully!
               </Text>
@@ -178,7 +216,7 @@ export default function GatePass() {
           )}
 
           {/* Form Fields */}
-          <View className="space-y-5">
+          <View>
             {/* Leaving Date */}
             <View>
               <View className="flex-row items-center mb-1">
@@ -187,17 +225,19 @@ export default function GatePass() {
               </View>
               <TouchableOpacity
                 onPress={() => setShowDatePicker(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Select leaving date"
                 className={`bg-white border mb-3 ${
                   errors.date ? "border-red-300" : "border-gray-200"
                 } rounded-lg px-4 py-3 shadow-sm`}
               >
                 <Text className="text-gray-700">
-                  {watch("date") || "Select a date..."}
+                  {dateValue || "Select a date..."}
                 </Text>
               </TouchableOpacity>
               {showDatePicker && (
                 <DateTimePicker
-                  value={new Date()}
+                  value={parsePassDate(dateValue)?.toDate() ?? new Date()}
                   mode="date"
                   display="default"
                   onChange={handleDateChange}
@@ -214,24 +254,26 @@ export default function GatePass() {
             {/* Leaving Time */}
             <View>
               <View className="flex-row items-center mb-1">
-                <Clock size={18} color="#6B7280" className="mr-3" />
+                <Clock size={18} color="#6B7280" />
                 <Text className="text-gray-700 mx-4 font-medium">
                   Leaving Time
                 </Text>
               </View>
               <TouchableOpacity
                 onPress={() => setShowTimePicker(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Select leaving time"
                 className={`bg-white border mb-3 ${
                   errors.time ? "border-red-300" : "border-gray-200"
                 } rounded-lg px-4 py-3 shadow-sm`}
               >
                 <Text className="text-gray-700">
-                  {watch("time") || "Select a time..."}
+                  {timeValue || "Select a time..."}
                 </Text>
               </TouchableOpacity>
               {showTimePicker && (
                 <DateTimePicker
-                  value={new Date()}
+                  value={timeStringToDate(timeValue)}
                   mode="time"
                   display="default"
                   onChange={handleTimeChange}
@@ -247,7 +289,7 @@ export default function GatePass() {
             {/* Place */}
             <View>
               <View className="flex-row items-center mb-1">
-                <MapPin size={18} color="#6B7280" className="mr-2" />
+                <MapPin size={18} color="#6B7280" />
                 <Text className="text-gray-700 mx-4 font-medium">Place</Text>
               </View>
               <Controller
@@ -260,6 +302,7 @@ export default function GatePass() {
                       errors.destination ? "border-red-300" : "border-gray-200"
                     } rounded-lg px-4 py-3 shadow-sm`}
                     placeholder="Where are you going?"
+                    accessibilityLabel="Destination"
                     onChangeText={onChange}
                     value={value}
                   />
@@ -275,7 +318,7 @@ export default function GatePass() {
             {/* Reason */}
             <View>
               <View className="flex-row items-center mb-1">
-                <ClipboardList size={18} color="#6B7280" className="mr-2" />
+                <ClipboardList size={18} color="#6B7280" />
                 <Text className="text-gray-700 mx-4 font-medium">Reason</Text>
               </View>
               <Controller
@@ -291,12 +334,22 @@ export default function GatePass() {
                     <RNPickerSelect
                       onValueChange={(selected) => {
                         onChange(selected);
-                        if (selected !== "Others") setValue("customReason", "");
+                        // Clear fields that belong to the previous reason so
+                        // a Home return date can't ride along with "Others".
+                        if (selected !== "Others") {
+                          setValue("customReason", "");
+                        }
+                        if (selected !== "Home") {
+                          setValue("comingDate", "");
+                          setValue("reasonForGoingHome", "");
+                          setValue("parentName", "");
+                          setValue("parentContact", "");
+                        }
                       }}
                       value={value}
                       placeholder={{
                         label: "Select a reason...",
-                        value: null, // Make sure placeholder value is null
+                        value: null,
                       }}
                       items={[
                         { label: "Going Home", value: "Home" },
@@ -306,7 +359,7 @@ export default function GatePass() {
                         inputIOS: {
                           paddingVertical: 12,
                           paddingHorizontal: 10,
-                          color: value ? "#374151" : "#9CA3AF", // Gray color when no value is selected
+                          color: value ? "#374151" : "#9CA3AF",
                         },
                         inputAndroid: {
                           paddingVertical: 12,
@@ -343,12 +396,18 @@ export default function GatePass() {
                           : "border-gray-200"
                       } rounded-lg px-4 py-3 shadow-sm`}
                       placeholder="Please specify your reason"
+                      accessibilityLabel="Custom reason"
                       onChangeText={onChange}
                       value={value}
                       multiline
                     />
                   )}
                 />
+                {errors.customReason && (
+                  <Text className="text-red-500 text-sm mb-2">
+                    {errors.customReason.message}
+                  </Text>
+                )}
               </View>
             )}
 
@@ -362,31 +421,27 @@ export default function GatePass() {
                   </View>
                   <TouchableOpacity
                     onPress={() => setShowReturnDatePicker(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Select return date"
                     className={`bg-white border mb-3 ${
                       errors.comingDate ? "border-red-300" : "border-gray-200"
                     } rounded-lg px-4 py-3 shadow-sm`}
                   >
                     <Text className="text-gray-700">
-                      {watch("comingDate") || "Select return date..."}
+                      {comingDateValue || "Select return date..."}
                     </Text>
                   </TouchableOpacity>
                   {showReturnDatePicker && (
                     <DateTimePicker
                       value={
-                        watch("comingDate")
-                          ? new Date(watch("comingDate"))
-                          : // Default to the leaving date (never below
-                            // minimumDate): a value below minimumDate
-                            // prevents the native dialog from opening.
-                            watch("date")
-                            ? new Date(watch("date"))
-                            : new Date()
+                        parsePassDate(comingDateValue || dateValue)?.toDate() ??
+                        new Date()
                       }
                       mode="date"
                       display="default"
                       onChange={handleReturnDateChange}
                       minimumDate={
-                        watch("date") ? new Date(watch("date")) : new Date()
+                        parsePassDate(dateValue)?.toDate() ?? new Date()
                       }
                     />
                   )}
@@ -399,7 +454,6 @@ export default function GatePass() {
 
                 <View>
                   <View className="flex-row items-center mb-1">
-                    {/* <User size={18} color="#6B7280" className="mr-2" /> */}
                     <Text className="text-gray-700 mx-4 font-medium">
                       Reason For Going Home
                     </Text>
@@ -407,27 +461,33 @@ export default function GatePass() {
                   <Controller
                     control={control}
                     name="reasonForGoingHome"
-                    rules={{ required: "Reason is required" }}
+                    rules={{ required: "Reason for going home is required" }}
                     render={({ field: { onChange, value } }) => (
                       <TextInput
                         className={`bg-white border mb-3 ${
-                          errors.parentName
+                          errors.reasonForGoingHome
                             ? "border-red-300"
                             : "border-gray-200"
                         } rounded-lg px-4 py-3 shadow-sm`}
-                        placeholder="Reason "
+                        placeholder="Reason"
+                        accessibilityLabel="Reason for going home"
                         onChangeText={onChange}
                         value={value}
                       />
                     )}
                   />
+                  {errors.reasonForGoingHome && (
+                    <Text className="text-red-500 text-sm mb-2">
+                      {errors.reasonForGoingHome.message}
+                    </Text>
+                  )}
                 </View>
 
                 <View>
                   <View className="flex-row items-center mb-1">
-                    <User size={18} color="#6B7280" className="mr-2" />
+                    <User size={18} color="#6B7280" />
                     <Text className="text-gray-700 mx-4 font-medium">
-                      Parent's Name
+                      {"Parent's Name"}
                     </Text>
                   </View>
                   <Controller
@@ -442,18 +502,24 @@ export default function GatePass() {
                             : "border-gray-200"
                         } rounded-lg px-4 py-3 shadow-sm`}
                         placeholder="Parent's full name"
+                        accessibilityLabel="Parent's name"
                         onChangeText={onChange}
                         value={value}
                       />
                     )}
                   />
+                  {errors.parentName && (
+                    <Text className="text-red-500 text-sm mb-2">
+                      {errors.parentName.message}
+                    </Text>
+                  )}
                 </View>
 
                 <View>
                   <View className="flex-row items-center mb-1">
-                    <Phone size={18} color="#6B7280" className="mr-2" />
+                    <Phone size={18} color="#6B7280" />
                     <Text className="text-gray-700 mx-4 font-medium">
-                      Parent's Contact
+                      {"Parent's Contact"}
                     </Text>
                   </View>
                   <Controller
@@ -474,28 +540,47 @@ export default function GatePass() {
                             : "border-gray-200"
                         } rounded-lg px-4 py-3 shadow-sm`}
                         placeholder="10-digit phone number"
-                        keyboardType="numeric"
+                        accessibilityLabel="Parent's contact"
+                        keyboardType="phone-pad"
+                        maxLength={10}
                         onChangeText={onChange}
                         value={value}
                       />
                     )}
                   />
+                  {errors.parentContact && (
+                    <Text className="text-red-500 text-sm mb-2">
+                      {errors.parentContact.message}
+                    </Text>
+                  )}
                 </View>
               </>
             )}
 
             {/* Submit Button */}
             <TouchableOpacity
-              className="bg-indigo-600 w-full py-4 rounded-lg mt-6 shadow-md"
+              className={`w-full py-4 rounded-lg mt-6 shadow-md ${
+                busy ? "bg-indigo-400" : "bg-indigo-600"
+              }`}
               onPress={handleSubmit(onSubmit)}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel="Submit gate pass request"
+              accessibilityState={{ busy }}
             >
-              <Text className="text-white text-center font-bold text-lg">
-                Submit Request
-              </Text>
+              {busy ? (
+                <Text className="text-white text-center font-bold text-lg">
+                  Submitting...
+                </Text>
+              ) : (
+                <Text className="text-white text-center font-bold text-lg">
+                  Submit Request
+                </Text>
+              )}
             </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }

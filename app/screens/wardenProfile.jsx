@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 import {
   Animated,
   Easing,
@@ -20,9 +20,11 @@ import {
   LogOut,
   Clock,
 } from "lucide-react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import axios from "axios";
+import dayjs from "dayjs";
+import { api, apiErrorMessage } from "../../lib/api";
+import { clearSession, getSession, routeForRole } from "../../lib/session";
+import { formatDate } from "../../lib/dates";
 
 const FeedbackMessage = ({ actionFeedback }) => {
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -68,7 +70,7 @@ const FeedbackMessage = ({ actionFeedback }) => {
 
       return () => clearTimeout(timer);
     }
-  }, [actionFeedback]);
+  }, [actionFeedback, fadeAnim, scaleAnim]);
 
   if (!actionFeedback) return null;
 
@@ -117,56 +119,54 @@ const WardenProfile = () => {
     rejected: 0,
   });
 
-  const fetchPasses = async () => {
+  const fetchPasses = useCallback(async () => {
     setRefreshing(true);
     try {
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) throw new Error("Authentication token not found");
+      const { token, user } = await getSession();
+      if (!token || !user) {
+        router.replace("/auth/login");
+        return;
+      }
+      if (user.role !== "warden") {
+        router.replace(routeForRole(user.role));
+        return;
+      }
 
-      const response = await axios.get(
-        "https://gate-pass-backend-2ccd.onrender.com/api/gatepass/",
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
+      const response = await api.get("/gatepass/");
+      const data = Array.isArray(response.data) ? response.data : [];
+
+      // Day passes handled by the warden: non-Home requests departing today.
+      // Comparing formatted local dates avoids the UTC-midnight shift that
+      // `new Date("YYYY-MM-DD")` introduces in negative-offset timezones.
+      const today = dayjs().format("YYYY-MM-DD");
+      const filteredPasses = data.filter(
+        (pass) =>
+          pass.reason !== "Home" &&
+          dayjs(pass.date).format("YYYY-MM-DD") === today
       );
 
-      // Filter for pending passes that aren't home requests
-      const filteredPasses = response.data.filter((pass) => {
-        if (pass.reason === "Home") return false;
-
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        const passDate = new Date(pass.date);
-        passDate.setHours(0, 0, 0, 0);
-
-        return today.getTime() === passDate.getTime();
-      });
-
-      // Calculate statistics
-      const total = filteredPasses.length;
-      const approved = filteredPasses.filter(
-        (p) => p.status === "approved"
-      ).length;
-      const active = filteredPasses.filter((p) => p.status === "active").length;
-      const rejected = filteredPasses.filter(
-        (p) => p.status === "rejected" && p.reason !== "Home"
-      ).length;
-
       setPasses(filteredPasses);
-      setStats({ total, approved, active, rejected });
+      setStats({
+        total: filteredPasses.length,
+        approved: filteredPasses.filter((p) => p.status === "approved").length,
+        active: filteredPasses.filter((p) => p.status === "active").length,
+        rejected: filteredPasses.filter((p) => p.status === "rejected").length,
+      });
     } catch (error) {
       console.error("Error fetching passes:", error);
-      showActionFeedback("Failed to fetch passes", false);
+      showActionFeedback(
+        apiErrorMessage(error, "Failed to load passes."),
+        false
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     fetchPasses();
-  }, []);
+  }, [fetchPasses]);
 
   const showActionFeedback = (message, isSuccess) => {
     setActionFeedback({ message, isSuccess });
@@ -174,39 +174,21 @@ const WardenProfile = () => {
 
   const handlePassAction = async (passId, action) => {
     try {
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) throw new Error("Authentication token not found");
-
-      const config = {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      };
-
       if (action === "approve") {
-        await axios.put(
-          `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/update/${passId}`,
-          {
-            status: "approved",
-            approvedAt: new Date(),
-            approvedBy: "Warden",
-            forwarded: false,
-          },
-          config
-        );
+        await api.put(`/gatepass/update/${passId}`, {
+          status: "approved",
+          approvedAt: new Date(),
+          approvedBy: "Warden",
+          forwarded: false,
+        });
         showActionFeedback("Pass Approved Successfully", true);
       } else if (action === "reject") {
-        await axios.put(
-          `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/update/${passId}`,
-          {
-            status: "rejected",
-            rejectedAt: new Date(),
-            rejectedBy: "Warden",
-            forwarded: false,
-          },
-          config
-        );
+        await api.put(`/gatepass/update/${passId}`, {
+          status: "rejected",
+          rejectedAt: new Date(),
+          rejectedBy: "Warden",
+          forwarded: false,
+        });
         showActionFeedback("Pass Rejected Successfully", true);
       }
 
@@ -214,18 +196,18 @@ const WardenProfile = () => {
     } catch (error) {
       console.error("Error in handleAction:", error);
       showActionFeedback(
-        error.response?.data?.message || `Failed to ${action} pass`,
+        apiErrorMessage(error, `Failed to ${action} pass`),
         false
       );
       if (error.response?.status === 401) {
-        await AsyncStorage.clear();
+        await clearSession();
         router.replace("/auth/login");
       }
     }
   };
 
   const handleLogout = async () => {
-    await AsyncStorage.clear();
+    await clearSession();
     router.replace("/auth/login");
   };
 
@@ -279,7 +261,7 @@ const WardenProfile = () => {
           <View className="flex-1 mb-3">
             <Text className="text-xs text-gray-500 mx-4">Date Range</Text>
             <Text className="text-sm text-gray-800 mx-4">
-              {new Date(item.date).toLocaleDateString()}
+              {formatDate(item.date)}
             </Text>
           </View>
         </View>
@@ -287,7 +269,7 @@ const WardenProfile = () => {
         <View className="flex-row items-start">
           <Clock size={18} color="#6366f1" className="mr-3 mt-0.5" />
           <View className="flex-1 mb-3">
-            <Text className="text-xs text-gray-500 mx-4">Duration</Text>
+            <Text className="text-xs text-gray-500 mx-4">Time</Text>
             <Text className="text-sm text-gray-800 mx-4">{item.time}</Text>
           </View>
         </View>
@@ -307,7 +289,9 @@ const WardenProfile = () => {
           <View>
             <Text className="text-xs text-gray-500 mx-4">Reason</Text>
             <Text className="text-sm text-gray-800 mx-4">
-              {item.customReason}
+              {[item.reasonForGoingHome, item.reason, item.customReason]
+                .filter(Boolean)
+                .join(" • ")}
             </Text>
           </View>
         </View>
@@ -374,6 +358,8 @@ const WardenProfile = () => {
           <TouchableOpacity
             onPress={handleLogout}
             className="p-2 rounded-lg bg-red-50"
+            accessibilityRole="button"
+            accessibilityLabel="Log out"
           >
             <LogOut size={24} color="#ef4444" />
           </TouchableOpacity>
@@ -418,7 +404,7 @@ const WardenProfile = () => {
       {/* Passes List */}
       <View className="px-4 pb-4 pt-4 ">
         <Text className="text-lg font-semibold text-gray-900 mb-3">
-          Pending Approval ({passes.length})
+          Today's Passes ({passes.length})
         </Text>
 
         {passes.length > 0 ? (

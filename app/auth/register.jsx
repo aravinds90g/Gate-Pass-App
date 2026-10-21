@@ -14,15 +14,16 @@ import {
 import { useForm, Controller } from "react-hook-form";
 import { Link, useRouter } from "expo-router";
 import { Picker } from "@react-native-picker/picker";
-import axios from "axios";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
+import { api, apiErrorMessage } from "../../lib/api";
 
 export default function Register() {
   const router = useRouter();
   const {
     control,
     handleSubmit,
+    unregister,
     formState: { errors },
   } = useForm();
 
@@ -36,30 +37,34 @@ export default function Register() {
   const departments = ["ECE", "CSE", "MECH", "EEE", "CSE(CS)", "AIDS"];
   const years = ["1", "2", "3", "4"];
 
+  // Student-only fields must not ride along when the role changes to mentor.
+  useEffect(() => {
+    if (selectedRole !== "student") {
+      unregister(["rollNo", "phoneNo"]);
+    }
+  }, [selectedRole, unregister]);
+
   const onSignup = async (data) => {
     setLoading(true);
     setErrorMessage("");
 
     const requestData = {
-      ...data,
+      name: data.name.trim(),
+      email: data.email.trim().toLowerCase(),
+      password: data.password,
       role: selectedRole,
       dept: selectedDept,
       year: selectedYear,
+      ...(selectedRole === "student"
+        ? { rollNo: data.rollNo, phoneNo: data.phoneNo }
+        : {}),
     };
-    console.log(requestData);
 
     try {
-      await axios.post(
-        "https://gate-pass-backend-2ccd.onrender.com/api/auth/register",
-        requestData,
-        { headers: { "Content-Type": "application/json" } }
-      );
-
-      router.push("/auth/login");
+      await api.post("/auth/register", requestData);
+      router.replace("/auth/login");
     } catch (error) {
-      setErrorMessage(
-        error.response ? error.response.data.message : "Signup Failed!"
-      );
+      setErrorMessage(apiErrorMessage(error, "Signup failed. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -88,7 +93,10 @@ export default function Register() {
             </View>
           ) : null}
 
-          {/* Role Selection */}
+          {/* Role Selection — only student and mentor self-register.
+              Admin, warden and security accounts are institutional roles and
+              must be provisioned server-side; offering them here let anyone
+              grant themselves approval/verification rights. */}
           <View className="mb-4">
             <Text className="text-gray-700 font-medium mb-2">I am a</Text>
             <View className="border border-gray-200 rounded-xl bg-white overflow-hidden">
@@ -96,14 +104,15 @@ export default function Register() {
                 selectedValue={selectedRole}
                 onValueChange={(itemValue) => setSelectedRole(itemValue)}
                 style={styles.picker}
+                accessibilityLabel="Role"
               >
                 <Picker.Item label="Student" value="student" />
                 <Picker.Item label="Mentor" value="mentor" />
-                <Picker.Item label="Admin" value="admin" />
-                <Picker.Item label="Warden" value="warden" />
-                <Picker.Item label="Security" value="security" />
               </Picker>
             </View>
+            <Text className="text-gray-400 text-xs mt-2">
+              Staff accounts are created by the campus administration.
+            </Text>
           </View>
 
           {/* Full Name */}
@@ -118,6 +127,8 @@ export default function Register() {
                   <TextInput
                     className="border border-gray-200 rounded-xl py-3 px-12 bg-white text-gray-800"
                     placeholder="John Doe"
+                    accessibilityLabel="Full name"
+                    autoComplete="name"
                     onChangeText={onChange}
                     value={value}
                   />
@@ -155,6 +166,9 @@ export default function Register() {
                   <TextInput
                     className="border border-gray-200 rounded-xl px-12 py-3 bg-white text-gray-800"
                     placeholder="john@example.com"
+                    accessibilityLabel="Email"
+                    autoComplete="email"
+                    textContentType="emailAddress"
                     keyboardType="email-address"
                     autoCapitalize="none"
                     onChangeText={onChange}
@@ -194,6 +208,9 @@ export default function Register() {
                   <TextInput
                     className="border border-gray-200 rounded-xl px-12 py-3 bg-white text-gray-800 pr-10"
                     placeholder="••••••••"
+                    accessibilityLabel="Password"
+                    autoComplete="new-password"
+                    textContentType="newPassword"
                     secureTextEntry={!showPassword}
                     onChangeText={onChange}
                     value={value}
@@ -242,6 +259,7 @@ export default function Register() {
                         <TextInput
                           className="border border-gray-200 rounded-xl px-12 py-3 bg-white text-gray-800"
                           placeholder="412622106001"
+                          accessibilityLabel="Roll number"
                           onChangeText={onChange}
                           value={value}
                         />
@@ -283,6 +301,9 @@ export default function Register() {
                         <TextInput
                           className="border border-gray-200 rounded-xl px-12 py-3 bg-white text-gray-800"
                           placeholder="9876543210"
+                          accessibilityLabel="Phone number"
+                          autoComplete="tel"
+                          textContentType="telephoneNumber"
                           keyboardType="phone-pad"
                           onChangeText={onChange}
                           value={value}

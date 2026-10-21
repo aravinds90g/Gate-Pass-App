@@ -1,5 +1,5 @@
 import { test, expect } from "@mobilewright/test";
-import { ACCOUNTS, ensureUserAPI, loginAs } from "./helpers";
+import { ACCOUNTS, ensureUserAPI, loginAs, expectVisible } from "./helpers";
 
 /**
  * File 4/5 — admin approves the forwarded passes.
@@ -15,9 +15,9 @@ test("admin approves the forwarded passes", async ({
   bundleId,
 }) => {
   await ensureUserAPI(ACCOUNTS.admin);
-  await loginAs(device, screen, bundleId, ACCOUNTS.admin, "Admin Dashboard");
+  await loginAs(device, screen, bundleId!, ACCOUNTS.admin, "Admin Dashboard");
 
-  await expect(screen.getByText(/Forwarded Passes \(/)).toBeVisible({
+  await expectVisible(screen.getByText(/Forwarded Passes \(/), {
     timeout: 30_000,
   });
 

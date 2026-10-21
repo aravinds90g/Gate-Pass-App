@@ -9,7 +9,6 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "extra": {
-      "QR_SECRET": "GATE-ACCESS-2025",
       "router": {
         "origin": false
       },
@@ -35,15 +34,6 @@
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-    "doctor": {
-      "reactNativeDirectoryCheck": {
-        "exclude": [
-          "react-icons",
-          "tailwindcss"
-        ],
-        "listUnknownPackages": false
-      }
-    },
     "plugins": [
       "expo-router",
       [
@@ -53,6 +43,13 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "CampusPass uses the camera to scan gate pass QR codes.",
+          "recordAudioAndroid": false
         }
       ]
     ],

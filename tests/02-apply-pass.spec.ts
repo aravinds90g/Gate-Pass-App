@@ -99,7 +99,7 @@ test("student applies for a Home gate pass", async ({
   const { studentEmail } = loadFlowAccounts();
   const student = { ...ACCOUNTS.student, email: studentEmail };
   await ensureUserAPI(student);
-  await loginAs(device, screen, bundleId, student, "Aravind S");
+  await loginAs(device, screen, bundleId!, student, "Aravind S");
 
   await tapText(screen, "New Gate Pass");
   await expect(screen.getByText("New Gate Pass").first()).toBeVisible({
