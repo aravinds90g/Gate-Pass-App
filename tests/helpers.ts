@@ -91,11 +91,42 @@ export const HOME_PASS = {
   parentContact: "1234567890",
 };
 
-/** Idempotent account setup via API. Reruns hit the duplicate path. */
-export async function ensureUserAPI(u: Record<string, string>) {
-  const res = await fetch(`${API_BASE}/auth/register`, {
+const PRIVILEGED_ROLES = new Set(["admin", "warden", "security"]);
+
+/**
+ * Staff accounts are no longer self-service: the backend accepts them only
+ * from an authenticated admin (or as the first admin on a clean deployment).
+ * Tests therefore provision them with the admin's token.
+ */
+async function fetchAdminToken(): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: ACCOUNTS.admin.email,
+      password: ACCOUNTS.admin.password,
+    }),
+  });
+  if (!res.ok) return null;
+  const json: any = await res.json().catch(() => null);
+  return json?.token ?? null;
+}
+
+/** Idempotent account setup via API. Reruns hit the duplicate path. */
+export async function ensureUserAPI(u: Record<string, string>) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (PRIVILEGED_ROLES.has(u.role)) {
+    const adminToken = await fetchAdminToken();
+    if (adminToken) headers.Authorization = `Bearer ${adminToken}`;
+    const staffKey = process.env.STAFF_SIGNUP_KEY;
+    if (staffKey) headers["x-staff-key"] = staffKey;
+  }
+
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: "POST",
+    headers,
     body: JSON.stringify(u),
   });
   const text = await res.text();

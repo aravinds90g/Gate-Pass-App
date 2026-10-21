@@ -55,8 +55,10 @@ export default function SecurityQRScanner() {
     setLoading(true);
 
     try {
-      const passId = String(data).split("/").pop() || String(data);
-      const response = await api.get(`/gatepass/passdata/${passId}`);
+      // The QR now carries a short-lived server-signed token, not a raw id.
+      const response = await api.post("/gatepass/verify", {
+        token: String(data).trim(),
+      });
       setPassData(response.data);
     } catch (error) {
       if (error.response?.status === 401) {
@@ -65,7 +67,14 @@ export default function SecurityQRScanner() {
         ]);
         return;
       }
-      Alert.alert("Error", "Invalid QR code");
+      const status = error.response?.status;
+      const message =
+        status === 410
+          ? "This QR code has expired. Ask the student to refresh it."
+          : status === 409
+            ? error.response?.data?.message || "This pass is not valid."
+            : "Invalid QR code";
+      Alert.alert("Cannot verify pass", message);
       setScanned(false);
     } finally {
       setLoading(false);
@@ -77,11 +86,10 @@ export default function SecurityQRScanner() {
     setLoading(true);
 
     try {
+      // Actor and timestamps are set by the server from the token, so the
+      // only thing the client may choose is the requested transition.
       await api.put(`/gatepass/update/${passData._id}`, {
         status: nextStatus,
-        ...(nextStatus === "active"
-          ? { activedAt: new Date().toISOString() }
-          : { expiredAt: new Date().toISOString() }),
       });
 
       setUpdatedTo(nextStatus);
