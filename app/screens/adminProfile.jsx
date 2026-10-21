@@ -1,5 +1,4 @@
-import React, { useEffect, useState } from "react";
-import { useRef } from "react";
+import React, { useCallback, useEffect, useState, useRef } from "react";
 import { Animated, Easing } from "react-native";
 import {
   View,
@@ -9,21 +8,100 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import axios from "axios";
 import {
   CheckCircle,
   XCircle,
-  Forward,
   LogOut,
   User,
   Clock,
   Calendar,
   MapPin,
-  ChevronRight,
   ClipboardList,
 } from "lucide-react-native";
+import { api, apiErrorMessage } from "../../lib/api";
+import { clearSession, getSession, routeForRole } from "../../lib/session";
+import { daysBetween, formatDate } from "../../lib/dates";
+
+const FeedbackMessage = ({ actionFeedback }) => {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
+
+  useEffect(() => {
+    if (actionFeedback) {
+      // Reset animations
+      fadeAnim.setValue(0);
+      scaleAnim.setValue(0.9);
+
+      // Start animations
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 200,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          friction: 5,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      // Auto-hide after 3 seconds
+      const timer = setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(fadeAnim, {
+            toValue: 0,
+            duration: 200,
+            easing: Easing.in(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(scaleAnim, {
+            toValue: 0.9,
+            duration: 200,
+            easing: Easing.in(Easing.quad),
+            useNativeDriver: true,
+          }),
+        ]).start();
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [actionFeedback, fadeAnim, scaleAnim]);
+
+  if (!actionFeedback) return null;
+
+  return (
+    <Animated.View
+      className={`absolute left-5 right-5 py-3 rounded-lg z-10 ${
+        actionFeedback.isSuccess ? "bg-green-500" : "bg-red-500"
+      }`}
+      style={{
+        top: "50%",
+        transform: [{ translateY: -50 }, { scale: scaleAnim }],
+        opacity: fadeAnim,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 5,
+      }}
+      accessibilityLiveRegion="polite"
+    >
+      <View className="flex-row items-center justify-center">
+        {actionFeedback.isSuccess ? (
+          <CheckCircle size={20} color="white" className="mr-2" />
+        ) : (
+          <XCircle size={20} color="white" className="mr-2" />
+        )}
+        <Text className="text-white text-center font-medium">
+          {actionFeedback.message}
+        </Text>
+      </View>
+    </Animated.View>
+  );
+};
 
 const AdminProfile = () => {
   const router = useRouter();
@@ -43,47 +121,48 @@ const AdminProfile = () => {
     rejected: 0,
   });
 
-  const fetchPasses = async () => {
+  const fetchPasses = useCallback(async () => {
     setRefreshing(true);
     try {
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) throw new Error("Authentication token not found");
+      const { token, user } = await getSession();
+      if (!token || !user) {
+        router.replace("/auth/login");
+        return;
+      }
+      if (user.role !== "admin") {
+        router.replace(routeForRole(user.role));
+        return;
+      }
 
-      const response = await axios.get(
-        "https://gate-pass-backend-2ccd.onrender.com/api/gatepass/",
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      const response = await api.get("/gatepass/");
+      const data = Array.isArray(response.data) ? response.data : [];
 
-      setPasses(response.data);
+      setPasses(data);
 
-      // Calculate statistics
-      const stats = {
-        total: response.data.filter((p) => p.reason === "Home").length,
-        approved: response.data.filter((p) => p.status === "approved").length,
-        pending: response.data.filter((p) => p.status === "pending").length,
-        active: response.data.filter((p) => p.status === "active").length,
-        forwarded: response.data.filter((p) => p.forwarded).length,
-        rejected: response.data.filter((p) => p.status === "rejected").length,
-      };
+      // Statistics must describe the whole list: "Total Passes" used to
+      // count only Home requests.
+      setStats({
+        total: data.length,
+        approved: data.filter((p) => p.status === "approved").length,
+        pending: data.filter((p) => p.status === "pending").length,
+        active: data.filter((p) => p.status === "active").length,
+        forwarded: data.filter((p) => p.forwarded).length,
+        rejected: data.filter((p) => p.status === "rejected").length,
+      });
 
-      setStats(stats);
       setError(null);
     } catch (err) {
       console.error("Error fetching passes:", err);
-      setError(err.message);
+      setError(apiErrorMessage(err, "Failed to load passes."));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     fetchPasses();
-  }, []);
+  }, [fetchPasses]);
 
   const showActionFeedback = (message, isSuccess) => {
     setActionFeedback({ message, isSuccess });
@@ -94,39 +173,15 @@ const AdminProfile = () => {
 
   const handlePassAction = async (passId, action) => {
     try {
-      const token = await AsyncStorage.getItem("userToken");
-      if (!token) throw new Error("Authentication token not found");
-
-      const config = {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      };
-
       if (action === "approve") {
-        await axios.put(
-          `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/update/${passId}`,
-          {
-            status: "approved",
-            approvedAt: new Date(),
-            approvedBy: "Principal",
-            forwarded: false,
-          },
-          config
-        );
+        await api.put(`/gatepass/update/${passId}`, {
+          status: "approved",
+        });
         showActionFeedback("Pass Approved Successfully", true);
       } else if (action === "reject") {
-        await axios.put(
-          `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/update/${passId}`,
-          {
-            status: "rejected",
-            rejectedAt: new Date(),
-            rejectedBy: "Principal",
-            forwarded: false,
-          },
-          config
-        );
+        await api.put(`/gatepass/update/${passId}`, {
+          status: "rejected",
+        });
         showActionFeedback("Pass Rejected Successfully", true);
       }
 
@@ -134,11 +189,11 @@ const AdminProfile = () => {
     } catch (error) {
       console.error("Error in handleAction:", error);
       showActionFeedback(
-        error.response?.data?.message || `Failed to ${action} pass`,
+        apiErrorMessage(error, `Failed to ${action} pass`),
         false
       );
       if (error.response?.status === 401) {
-        await AsyncStorage.clear();
+        await clearSession();
         router.replace("/auth/login");
       }
     }
@@ -146,92 +201,11 @@ const AdminProfile = () => {
 
   const handleLogout = async () => {
     try {
-      await AsyncStorage.clear();
+      await clearSession();
       router.replace("/auth/login");
     } catch (error) {
       console.error("Logout error:", error);
     }
-  };
-
-  const FeedbackMessage = ({ actionFeedback }) => {
-    const fadeAnim = useRef(new Animated.Value(0)).current;
-    const scaleAnim = useRef(new Animated.Value(0.9)).current;
-
-    useEffect(() => {
-      if (actionFeedback) {
-        // Reset animations
-        fadeAnim.setValue(0);
-        scaleAnim.setValue(0.9);
-
-        // Start animations
-        Animated.parallel([
-          Animated.timing(fadeAnim, {
-            toValue: 1,
-            duration: 200,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.spring(scaleAnim, {
-            toValue: 1,
-            friction: 5,
-            useNativeDriver: true,
-          }),
-        ]).start();
-
-        // Auto-hide after 3 seconds
-        const timer = setTimeout(() => {
-          Animated.parallel([
-            Animated.timing(fadeAnim, {
-              toValue: 0,
-              duration: 200,
-              easing: Easing.in(Easing.quad),
-              useNativeDriver: true,
-            }),
-            Animated.timing(scaleAnim, {
-              toValue: 0.9,
-              duration: 200,
-              useNativeDriver: true,
-            }),
-          ]).start();
-        }, 3000);
-
-        return () => clearTimeout(timer);
-      }
-    }, [actionFeedback]);
-
-    if (!actionFeedback) return null;
-
-    return (
-      <Animated.View
-        className={`absolute left-5 right-5 py-3 rounded-lg z-10 ${
-          actionFeedback.isSuccess ? "bg-green-500" : "bg-red-500"
-        }`}
-        style={{
-          top: "50%",
-          transform: [
-            { translateY: -50 }, // Centers vertically
-            { scale: scaleAnim },
-          ],
-          opacity: fadeAnim,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.25,
-          shadowRadius: 4,
-          elevation: 5,
-        }}
-      >
-        <View className="flex-row items-center justify-center">
-          {actionFeedback.isSuccess ? (
-            <CheckCircle size={20} color="white" className="mr-2" />
-          ) : (
-            <XCircle size={20} color="white" className="mr-2" />
-          )}
-          <Text className="text-white text-center font-medium">
-            {actionFeedback.message}
-          </Text>
-        </View>
-      </Animated.View>
-    );
   };
 
   const renderPass = ({ item }) => (
@@ -282,10 +256,8 @@ const AdminProfile = () => {
           <View>
             <Text className="text-xs text-slate-500 mx-4">Dates</Text>
             <Text className="text-sm text-slate-700 mx-4">
-              {new Date(item.date).toLocaleDateString()} -{" "}
-              {item.comingDate
-                ? new Date(item.comingDate).toLocaleDateString()
-                : "N/A"}
+              {formatDate(item.date)} -{" "}
+              {item.comingDate ? formatDate(item.comingDate) : "N/A"}
             </Text>
           </View>
         </View>
@@ -296,10 +268,7 @@ const AdminProfile = () => {
             <Text className="text-xs text-slate-500 mx-4">Duration</Text>
             <Text className="text-sm text-slate-700 mx-4">
               {item.comingDate && item.date
-                ? Math.ceil(
-                    (new Date(item.comingDate) - new Date(item.date)) /
-                      (1000 * 60 * 60 * 24)
-                  ) + " days"
+                ? `${daysBetween(item.date, item.comingDate)} days`
                 : "N/A"}
             </Text>
           </View>
@@ -320,7 +289,9 @@ const AdminProfile = () => {
           <View>
             <Text className="text-xs text-slate-500 mx-4">Reason</Text>
             <Text className="text-sm text-slate-700 mx-4">
-              {item.reasonForGoingHome + `  ( ${item.reason} )`}
+              {[item.reasonForGoingHome, item.reason]
+                .filter(Boolean)
+                .join(" • ")}
             </Text>
           </View>
         </View>
@@ -401,6 +372,8 @@ const AdminProfile = () => {
                 onPress={handleLogout}
                 className="p-2 rounded-xl bg-red-50"
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel="Log out"
               >
                 <LogOut size={24} color="#ef4444" />
               </TouchableOpacity>

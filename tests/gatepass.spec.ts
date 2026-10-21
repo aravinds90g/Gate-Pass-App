@@ -39,5 +39,5 @@ test("student can log in and reaches the profile", async ({
   screen,
   bundleId,
 }) => {
-  await loginAs(device, screen, bundleId, ACCOUNTS.student, "Aravind S");
+  await loginAs(device, screen, bundleId!, ACCOUNTS.student, "Aravind S");
 });

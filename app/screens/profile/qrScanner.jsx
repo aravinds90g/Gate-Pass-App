@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from "react";
 import { Alert, ActivityIndicator, StyleSheet } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import axios from "axios";
 import { router } from "expo-router";
 import { MaterialIcons, Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { View, Text, TouchableOpacity } from "react-native";
 import Animated, {
   FadeIn,
   FadeOut,
   SlideInDown,
 } from "react-native-reanimated";
+import { api, apiErrorMessage } from "../../../lib/api";
+import { clearSession, getSession } from "../../../lib/session";
+import { formatDate, getPassDisplayStatus } from "../../../lib/dates";
 
 export default function SecurityQRScanner() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -18,21 +19,34 @@ export default function SecurityQRScanner() {
   const [loading, setLoading] = useState(false);
   const [passData, setPassData] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [updatedTo, setUpdatedTo] = useState(null);
   const [token, setToken] = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     const initialize = async () => {
-      if (!permission?.granted) await requestPermission();
-      const userToken = await AsyncStorage.getItem("userToken");
-      if (!userToken) router.replace("/login");
+      if (!permission?.granted) {
+        await requestPermission();
+      }
+      const { token: userToken } = await getSession();
+      if (cancelled) return;
+      if (!userToken) {
+        router.replace("/auth/login");
+        return;
+      }
       setToken(userToken);
     };
+
     initialize();
-  }, [permission]);
+    return () => {
+      cancelled = true;
+    };
+  }, [permission?.granted, requestPermission]);
 
   const handleUnauthorized = async () => {
-    await AsyncStorage.removeItem("userToken");
-    router.replace("/login");
+    await clearSession();
+    router.replace("/auth/login");
   };
 
   const handleBarCodeScanned = async ({ data }) => {
@@ -41,17 +55,10 @@ export default function SecurityQRScanner() {
     setLoading(true);
 
     try {
-      const passId = data.split("/").pop() || data;
-      const response = await axios.get(
-        `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/passdata/${passId}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (response.status !== 200) {
-        Alert.alert("Error", "Invalid QR code");
-        setScanned(false);
-        return;
-      }
+      // The QR now carries a short-lived server-signed token, not a raw id.
+      const response = await api.post("/gatepass/verify", {
+        token: String(data).trim(),
+      });
       setPassData(response.data);
     } catch (error) {
       if (error.response?.status === 401) {
@@ -60,37 +67,39 @@ export default function SecurityQRScanner() {
         ]);
         return;
       }
-      Alert.alert("Error", "Invalid QR code");
+      const status = error.response?.status;
+      const message =
+        status === 410
+          ? "This QR code has expired. Ask the student to refresh it."
+          : status === 409
+            ? error.response?.data?.message || "This pass is not valid."
+            : "Invalid QR code";
+      Alert.alert("Cannot verify pass", message);
       setScanned(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const updatePassStatus = async () => {
+  const updatePassStatus = async (nextStatus) => {
     if (!passData || !token) return;
     setLoading(true);
 
     try {
-      const newStatus = passData.status === "approved" ? "active" : "expired";
+      // Actor and timestamps are set by the server from the token, so the
+      // only thing the client may choose is the requested transition.
+      await api.put(`/gatepass/update/${passData._id}`, {
+        status: nextStatus,
+      });
 
-      await axios.put(
-        `https://gate-pass-backend-2ccd.onrender.com/api/gatepass/update/${passData._id}`,
-        {
-          status: newStatus,
-          ...(newStatus === "active"
-            ? { activedAt: new Date().toISOString() }
-            : { expiredAt: new Date().toISOString() }),
-        },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
+      setUpdatedTo(nextStatus);
       setSuccess(true);
       setTimeout(() => {
         setSuccess(false);
         setScanned(false);
         setPassData(null);
-        router.replace("screens/securityProfile");
+        setUpdatedTo(null);
+        router.replace("/screens/securityProfile");
       }, 2000);
     } catch (error) {
       if (error.response?.status === 401) {
@@ -99,10 +108,33 @@ export default function SecurityQRScanner() {
         ]);
         return;
       }
-      Alert.alert("Error", "Failed to update pass status");
+      Alert.alert(
+        "Error",
+        apiErrorMessage(error, "Failed to update the pass status.")
+      );
     } finally {
       setLoading(false);
     }
+  };
+
+  const displayStatus = getPassDisplayStatus(passData);
+  const canActivate = displayStatus === "approved";
+  const canExpire = displayStatus === "active";
+  const expired = displayStatus === "expired";
+
+  const confirmExpire = () => {
+    Alert.alert(
+      "Mark pass as expired?",
+      "The student will no longer be able to use this pass.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Mark expired",
+          style: "destructive",
+          onPress: () => updatePassStatus("expired"),
+        },
+      ]
+    );
   };
 
   if (!permission) {
@@ -149,8 +181,7 @@ export default function SecurityQRScanner() {
             <MaterialIcons name="check-circle" size={80} color="#16a34a" />
             <Text style={styles.successTitle}>Success!</Text>
             <Text style={styles.successText}>
-              Pass marked as{" "}
-              {passData?.status === "approved" ? "ACTIVE" : "EXPIRED"}
+              Pass marked as {updatedTo ? updatedTo.toUpperCase() : "UPDATED"}
             </Text>
             <View style={styles.successDivider}>
               <Text style={styles.successName}>{passData?.name}</Text>
@@ -168,8 +199,20 @@ export default function SecurityQRScanner() {
     <View style={styles.mainContainer}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>QR Code Scanner</Text>
-        <Text style={styles.headerSubtitle}>Scan student gate passes</Text>
+        <View style={styles.headerRow}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+            style={styles.backButton}
+          >
+            <Ionicons name="chevron-back" size={24} color="white" />
+          </TouchableOpacity>
+          <View>
+            <Text style={styles.headerTitle}>QR Code Scanner</Text>
+            <Text style={styles.headerSubtitle}>Scan student gate passes</Text>
+          </View>
+        </View>
       </View>
 
       {!passData ? (
@@ -219,20 +262,21 @@ export default function SecurityQRScanner() {
               <View
                 style={[
                   styles.statusBadge,
-                  passData.status === "approved" && styles.statusApproved,
-                  passData.status === "active" && styles.statusActive,
-                  passData.status === "expired" && styles.statusExpired,
+                  displayStatus === "approved" && styles.statusApproved,
+                  displayStatus === "active" && styles.statusActive,
+                  expired && styles.statusExpired,
                 ]}
               >
                 <Text
                   style={[
                     styles.statusText,
-                    passData.status === "approved" && styles.statusTextApproved,
-                    passData.status === "active" && styles.statusTextActive,
-                    passData.status === "expired" && styles.statusTextExpired,
+                    displayStatus === "approved" &&
+                      styles.statusTextApproved,
+                    displayStatus === "active" && styles.statusTextActive,
+                    expired && styles.statusTextExpired,
                   ]}
                 >
-                  {passData.status.toUpperCase()}
+                  {(displayStatus ?? "unknown").toUpperCase()}
                 </Text>
               </View>
             </View>
@@ -249,6 +293,16 @@ export default function SecurityQRScanner() {
                   <Text style={styles.infoText}>{passData.reason}</Text>
                 </View>
               )}
+
+              <View style={styles.infoRow}>
+                <Ionicons name="calendar-outline" size={18} color="#6b7280" />
+                <Text style={styles.infoText}>
+                  {formatDate(passData.date)}
+                  {passData.comingDate
+                    ? `  →  ${formatDate(passData.comingDate)}`
+                    : ""}
+                </Text>
+              </View>
             </View>
 
             <View style={styles.actionsContainer}>
@@ -256,22 +310,47 @@ export default function SecurityQRScanner() {
                 <ActivityIndicator size="large" color="#6366f1" />
               ) : (
                 <>
-                  <TouchableOpacity
-                    onPress={updatePassStatus}
-                    disabled={loading}
-                    style={[
-                      styles.actionButton,
-                      passData.status === "approved"
-                        ? styles.activateButton
-                        : styles.expireButton,
-                    ]}
-                  >
-                    <Text style={styles.actionButtonText}>
-                      {passData.status === "approved"
-                        ? "Activate Pass"
-                        : "Mark as Expired"}
-                    </Text>
-                  </TouchableOpacity>
+                  {canActivate && (
+                    <TouchableOpacity
+                      onPress={() => updatePassStatus("active")}
+                      disabled={loading}
+                      style={[styles.actionButton, styles.activateButton]}
+                      accessibilityRole="button"
+                      accessibilityState={{ busy: loading }}
+                    >
+                      <Text style={styles.actionButtonText}>Activate Pass</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {canExpire && (
+                    <TouchableOpacity
+                      onPress={confirmExpire}
+                      disabled={loading}
+                      style={[styles.actionButton, styles.expireButton]}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.actionButtonText}>
+                        Mark as Expired
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {!canActivate && !canExpire && (
+                    <View style={styles.noticeBox}>
+                      <Ionicons
+                        name={expired ? "time-outline" : "alert-circle-outline"}
+                        size={20}
+                        color="#92400e"
+                      />
+                      <Text style={styles.noticeText}>
+                        {expired
+                          ? `This pass expired on ${formatDate(
+                              passData.comingDate || passData.date
+                            )}. Entry must be refused.`
+                          : `No action available for a "${displayStatus}" pass.`}
+                      </Text>
+                    </View>
+                  )}
 
                   <TouchableOpacity
                     onPress={() => {
@@ -279,6 +358,7 @@ export default function SecurityQRScanner() {
                       setPassData(null);
                     }}
                     style={styles.scanAnotherButton}
+                    accessibilityRole="button"
                   >
                     <Text style={styles.scanAnotherText}>Scan Another</Text>
                   </TouchableOpacity>
@@ -404,6 +484,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#a5b4fc",
     marginTop: 4,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  backButton: {
+    padding: 4,
+    marginRight: 12,
+  },
+  noticeBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fef3c7",
+    borderRadius: 8,
+    padding: 16,
+  },
+  noticeText: {
+    flex: 1,
+    marginLeft: 10,
+    color: "#92400e",
+    fontSize: 14,
   },
   cameraContainer: {
     flex: 1,

@@ -7,23 +7,25 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import axios from "axios";
 import {
   CheckCircle2,
   Clock,
-  XCircle,
   ChevronRight,
   CalendarDays,
   MapPin,
   ChevronLeft,
   Home,
-  User,
   ArrowRight,
-  Clock as ClockIcon,
 } from "lucide-react-native";
+import { api, apiErrorMessage } from "../../../lib/api";
+import { getSession } from "../../../lib/session";
+import {
+  formatDate,
+  formatTime,
+  getPassDisplayStatus,
+} from "../../../lib/dates";
 
 export default function ApprovedGatePass() {
   const router = useRouter();
@@ -31,41 +33,35 @@ export default function ApprovedGatePass() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const fetchPasses = async () => {
+  const fetchPasses = useCallback(async () => {
     try {
-      const userData = await AsyncStorage.getItem("userData");
-      if (!userData) {
+      const { user } = await getSession();
+      if (!user?.email) {
         router.replace("/auth/login");
         return;
       }
 
-      const { email } = JSON.parse(userData);
-      const response = await axios.get(
-        "https://gate-pass-backend-2ccd.onrender.com/api/gatepass/email",
-        { params: { email } }
-      );
+      const response = await api.get("/gatepass/email", {
+        params: { email: user.email },
+      });
+      const data = Array.isArray(response.data) ? response.data : [];
 
-      console.log(response.data);
-
-      // Process passes with expiration status
-      const processedPasses = response.data.map((pass) => {
-        const now = new Date();
-        const returnDate = new Date(pass.comingDate || pass.date);
-        return {
-          ...pass,
-          isExpired: pass.status === "approved" && now > returnDate,
-        };
+      // Keep only passes that are still usable *today*. The old code only
+      // looked at `status`, so activated passes stayed "Active" forever.
+      const activePasses = data.filter((pass) => {
+        const status = getPassDisplayStatus(pass);
+        return status === "approved" || status === "active";
       });
 
-      setPasses(processedPasses);
+      setPasses(activePasses);
     } catch (error) {
       console.error("Error fetching passes:", error);
-      Alert.alert("Error", "Failed to fetch pass data");
+      Alert.alert("Error", apiErrorMessage(error, "Failed to load your passes."));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [router]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -74,20 +70,9 @@ export default function ApprovedGatePass() {
 
   useEffect(() => {
     fetchPasses();
-  }, []);
+  }, [fetchPasses]);
 
   const getStatusDetails = (pass) => {
-    if (pass.status === "approved") {
-      return {
-        text: "Approved",
-        color: "text-blue-600",
-        bg: "bg-blue-50",
-        icon: <CheckCircle2 size={16} color="#3b82f6" />,
-        cardBorder: "border-blue-200",
-        cardBg: "bg-blue-50",
-      };
-    }
-
     if (pass.status === "active") {
       return {
         text: "Active",
@@ -96,6 +81,17 @@ export default function ApprovedGatePass() {
         icon: <CheckCircle2 size={16} color="#16a34a" />,
         cardBorder: "border-green-200",
         cardBg: "bg-green-50",
+      };
+    }
+
+    if (pass.status === "approved") {
+      return {
+        text: "Approved",
+        color: "text-blue-600",
+        bg: "bg-blue-50",
+        icon: <CheckCircle2 size={16} color="#3b82f6" />,
+        cardBorder: "border-blue-200",
+        cardBg: "bg-blue-50",
       };
     }
 
@@ -109,15 +105,6 @@ export default function ApprovedGatePass() {
     };
   };
 
-  const formatDate = (dateString) => {
-    const options = { month: "short", day: "numeric", year: "numeric" };
-    return new Date(dateString).toLocaleDateString(undefined, options);
-  };
-
-  const formatTime = (timeString) => {
-    return timeString?.substring(0, 5) || "";
-  };
-
   if (loading) {
     return (
       <View className="flex-1 justify-center items-center bg-gray-50">
@@ -127,27 +114,16 @@ export default function ApprovedGatePass() {
     );
   }
 
-  const activePasses = passes.filter((pass) => {
-    // First check if pass is approved or active
-    const isApprovedOrActive =
-      pass.status === "approved" || pass.status === "active";
-
-    // For approved passes, check expiration only if they have a comingDate
-    if (pass.status === "approved" && pass.comingDate) {
-      const now = new Date();
-      const returnDate = new Date(pass.comingDate);
-      return isApprovedOrActive && now <= returnDate;
-    }
-
-    // For active passes or approved passes without comingDate, just check status
-    return isApprovedOrActive;
-  });
-
   return (
     <View className="flex-1 bg-gray-50">
       {/* Header */}
       <View className="bg-white px-5 py-4 flex-row items-center border-b border-gray-200 shadow-sm">
-        <TouchableOpacity onPress={() => router.back()} className="mr-4">
+        <TouchableOpacity
+          onPress={() => router.back()}
+          className="mr-4"
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <ChevronLeft size={24} color="#4B5563" />
         </TouchableOpacity>
         <Text className="text-xl font-bold text-gray-800">
@@ -162,7 +138,7 @@ export default function ApprovedGatePass() {
         contentContainerStyle={{ paddingBottom: 20 }}
       >
         <View className="p-4">
-          {activePasses.length === 0 ? (
+          {passes.length === 0 ? (
             <View className="flex-1 justify-center items-center py-16">
               <View className="bg-indigo-100 p-6 rounded-full mb-4">
                 <CheckCircle2 size={36} color="#4f46e5" />
@@ -176,6 +152,8 @@ export default function ApprovedGatePass() {
               <TouchableOpacity
                 className="bg-indigo-600 px-6 py-3 rounded-lg flex-row items-center"
                 onPress={() => router.push("/screens/profile/gatepass")}
+                accessibilityRole="button"
+                accessibilityLabel="Create a new gate pass"
               >
                 <Text className="text-white font-medium mr-2">
                   Create New Pass
@@ -190,25 +168,26 @@ export default function ApprovedGatePass() {
                   Your Active Passes
                 </Text>
                 <Text className="text-gray-500 mt-1">
-                  {activePasses.length} pass
-                  {activePasses.length !== 1 ? "es" : ""} available
+                  {passes.length} pass{passes.length !== 1 ? "es" : ""} available
                 </Text>
               </View>
 
-              {activePasses.map((pass) => {
+              {passes.map((pass) => {
                 const status = getStatusDetails(pass);
-                const isHome = pass.destination;
+                // Was `pass.destination`, always truthy: every card showed
+                // the home icon regardless of destination.
+                const isHome = pass.reason === "Home";
 
                 return (
                   <TouchableOpacity
                     key={pass._id}
                     className={`${status.cardBg} p-5 rounded-xl mb-4 border ${status.cardBorder} shadow-sm`}
                     onPress={() =>
-                      router.push(
-                        `/screens/profile/gatePassDetails/${pass._id}`
-                      )
+                      router.push(`/screens/profile/gatePassDetails/${pass._id}`)
                     }
                     activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Pass ${pass._id.slice(-6)}, ${status.text}`}
                   >
                     <View className="flex-row justify-between items-start">
                       <View className="flex-1">
@@ -236,8 +215,8 @@ export default function ApprovedGatePass() {
                             : pass.reason}
                         </Text>
 
-                        <View className="space-y-3">
-                          <View className="flex-row items-center">
+                        <View>
+                          <View className="flex-row items-center mb-3">
                             <View className="bg-indigo-100 p-2 rounded-full mr-3">
                               <CalendarDays size={16} color="#4f46e5" />
                             </View>
@@ -253,9 +232,9 @@ export default function ApprovedGatePass() {
                           </View>
 
                           {pass.comingDate && (
-                            <View className="flex-row items-center">
+                            <View className="flex-row items-center mb-3">
                               <View className="bg-indigo-100 p-2 rounded-full mr-3">
-                                <ClockIcon size={16} color="#4f46e5" />
+                                <Clock size={16} color="#4f46e5" />
                               </View>
                               <View>
                                 <Text className="text-xs text-gray-500">

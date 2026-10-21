@@ -7,10 +7,8 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import axios from "axios";
 import {
   Clock,
   XCircle,
@@ -18,7 +16,16 @@ import {
   CalendarDays,
   MapPin,
   ChevronLeft,
+  Plus,
 } from "lucide-react-native";
+import { api, apiErrorMessage } from "../../../lib/api";
+import { getSession } from "../../../lib/session";
+import {
+  formatDate,
+  formatTime,
+  getPassDisplayStatus,
+  parsePassDate,
+} from "../../../lib/dates";
 
 // Status configuration for rejected, pending, and expired
 const statusConfig = {
@@ -51,51 +58,44 @@ export default function PassStatus() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const fetchPasses = async () => {
+  const fetchPasses = useCallback(async () => {
     try {
-      const userData = await AsyncStorage.getItem("userData");
-      if (!userData) {
+      const { user } = await getSession();
+      if (!user?.email) {
         router.replace("/auth/login");
         return;
       }
 
-      const { email } = JSON.parse(userData);
-      const response = await axios.get(
-        "https://gate-pass-backend-2ccd.onrender.com/api/gatepass/email",
-        { params: { email } }
-      );
+      const response = await api.get("/gatepass/email", {
+        params: { email: user.email },
+      });
+      const data = Array.isArray(response.data) ? response.data : [];
 
-      // Process passes with expiration status
-      const processedPasses = response.data
-        .map((pass) => {
-          const now = new Date();
-          const returnDate = new Date(pass.comingDate || pass.date);
-          const isExpired = pass.status === "approved" && now > returnDate;
-          return {
-            ...pass,
-            isExpired,
-            displayStatus: isExpired ? "expired" : pass.status,
-          };
-        })
-        // Filter to only show rejected, pending, and expired passes
+      // Only rejected, pending, and expired passes belong on this screen;
+      // expiry is computed the same way everywhere (lib/dates).
+      const processedPasses = data
+        .map((pass) => ({
+          ...pass,
+          displayStatus: getPassDisplayStatus(pass),
+        }))
         .filter((pass) =>
           ["rejected", "pending", "expired"].includes(pass.displayStatus)
-        );
+        )
+        .sort((a, b) => {
+          const left = parsePassDate(b.date)?.valueOf() ?? 0;
+          const right = parsePassDate(a.date)?.valueOf() ?? 0;
+          return left - right;
+        });
 
-      // Sort passes by date (newest first)
-      const sortedPasses = processedPasses.sort(
-        (a, b) => new Date(b.date) - new Date(a.date)
-      );
-
-      setPasses(sortedPasses);
+      setPasses(processedPasses);
     } catch (error) {
       console.error("Error fetching passes:", error);
-      Alert.alert("Error", "Failed to fetch pass data");
+      Alert.alert("Error", apiErrorMessage(error, "Failed to load your passes."));
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [router]);
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -104,20 +104,10 @@ export default function PassStatus() {
 
   useEffect(() => {
     fetchPasses();
-  }, []);
+  }, [fetchPasses]);
 
-  const getStatusDetails = (pass) => {
-    return statusConfig[pass.displayStatus] || statusConfig.pending;
-  };
-
-  const formatDate = (dateString) => {
-    const options = { month: "short", day: "numeric", year: "numeric" };
-    return new Date(dateString).toLocaleDateString(undefined, options);
-  };
-
-  const formatTime = (timeString) => {
-    return timeString?.substring(0, 5) || "";
-  };
+  const getStatusDetails = (pass) =>
+    statusConfig[pass.displayStatus] || statusConfig.pending;
 
   if (loading) {
     return (
@@ -132,11 +122,10 @@ export default function PassStatus() {
     <View className="flex-1 bg-gray-50">
       <View className="bg-white px-5 py-4 flex-row items-center border-b border-gray-200 shadow-sm">
         <TouchableOpacity
-          onPress={async () => {
-            await router.back(); // Wait for navigation to complete
-            onRefresh();
-          }}
+          onPress={() => router.back()}
           className="mr-4"
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
         >
           <ChevronLeft size={24} color="#4B5563" />
         </TouchableOpacity>
@@ -164,16 +153,15 @@ export default function PassStatus() {
                 You don't have any pending, rejected, or expired passes
               </Text>
               <TouchableOpacity
-                onPress={() => {
-                  router.back();
-                  onRefresh();
-                }}
-                className="mr-4"
+                onPress={() => router.replace("/screens/profile/gatepass")}
+                className="bg-indigo-600 px-6 py-3 rounded-lg flex-row items-center"
+                accessibilityRole="button"
+                accessibilityLabel="Create a new gate pass"
               >
-                <Text className="text-white font-medium mr-2">
+                <Plus size={18} color="white" />
+                <Text className="text-white font-medium ml-2">
                   Create New Pass
                 </Text>
-                <ChevronRight size={18} color="white" />
               </TouchableOpacity>
             </View>
           ) : (
@@ -187,11 +175,11 @@ export default function PassStatus() {
                     key={pass._id}
                     className={`${status.bg} p-5 rounded-xl mb-4 border ${status.border} shadow-sm`}
                     onPress={() =>
-                      router.push(
-                        `/screens/profile/gatePassDetails/${pass._id}`
-                      )
+                      router.push(`/screens/profile/gatePassDetails/${pass._id}`)
                     }
                     activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Pass ${pass._id.slice(-6)}, ${status.text}`}
                   >
                     <View className="flex-row justify-between items-start">
                       <View className="flex-1">
@@ -219,8 +207,8 @@ export default function PassStatus() {
                             : pass.reason}
                         </Text>
 
-                        <View className="space-y-3">
-                          <View className="flex-row items-center">
+                        <View>
+                          <View className="flex-row items-center mb-3">
                             <View className="bg-indigo-100 p-2 rounded-full mr-3">
                               <CalendarDays size={16} color="#4f46e5" />
                             </View>

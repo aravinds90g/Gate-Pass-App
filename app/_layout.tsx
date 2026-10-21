@@ -28,15 +28,15 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="screens/appInfo/privacyPolicy"
-          options={{ title: "privacyPolicy", headerShown: false }}
+          options={{ title: "Privacy Policy", headerShown: false }}
         />
         <Stack.Screen
           name="screens/appInfo/aboutApp"
-          options={{ title: "privacyPolicy", headerShown: false }}
+          options={{ title: "About App", headerShown: false }}
         />
         <Stack.Screen
           name="screens/profile/passStatus"
-          options={{ title: "privacyPolicy", headerShown: false }}
+          options={{ title: "Pass Status", headerShown: false }}
         />
         <Stack.Screen
           name="screens/profile/gatePassDetails/[id]"
@@ -45,7 +45,7 @@ export default function RootLayout() {
         <Stack.Screen
           name="screens/profile/qrScanner"
           options={{
-            title: "QRScannerScreen",
+            title: "QR Scanner",
             headerShown: false,
             freezeOnBlur: true,
           }}
@@ -53,7 +53,7 @@ export default function RootLayout() {
         <Stack.Screen
           name="screens/profile/qrCode"
           options={{
-            title: "QRScannerScreen",
+            title: "Gate Pass QR",
             headerShown: false,
             freezeOnBlur: true,
           }}
@@ -64,7 +64,7 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="screens/mentorProfile"
-          options={{ title: "Security Profile", headerShown: false }}
+          options={{ title: "Mentor Profile", headerShown: false }}
         />
         <Stack.Screen
           name="screens/adminProfile"

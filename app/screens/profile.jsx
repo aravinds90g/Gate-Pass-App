@@ -2,18 +2,18 @@ import {
   View,
   Text,
   TouchableOpacity,
-  Image,
   ScrollView,
   RefreshControl,
   Animated,
 } from "react-native";
 import { useRouter } from "expo-router";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useState, useCallback } from "react";
-import { Plus, LogOut, Edit, ChevronRight } from "lucide-react-native";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { ChevronRight } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
-import axios from "axios";
 import { FontAwesome } from "@expo/vector-icons";
+import { api } from "../../lib/api";
+import { clearSession, getSession } from "../../lib/session";
+import { getPassDisplayStatus } from "../../lib/dates";
 
 export default function Profile() {
   const router = useRouter();
@@ -30,56 +30,53 @@ export default function Profile() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const fadeAnim = useState(new Animated.Value(0))[0];
+  // The interval needs the current email; keeping it in a ref avoids the
+  // stale-closure bug where polling always called with the initial "".
+  const emailRef = useRef("");
 
-  const fetchPassStats = async (email) => {
+  const fetchPassStats = useCallback(async (email) => {
+    if (!email) return;
     try {
-      if (!email) return;
-      const response = await axios.get(
-        "https://gate-pass-backend-2ccd.onrender.com/api/gatepass/email",
-        {
-          params: { email },
-        }
-      );
-      const data = response.data || [];
-      const active = data.filter(
-        (pass) => pass.status === "active" || pass.status === "approved"
+      const response = await api.get("/gatepass/email", { params: { email } });
+      const data = Array.isArray(response.data) ? response.data : [];
+      // Match the Approved Passes screen: an approved pass is usable before
+      // security scans it, so it counts as active too.
+      const active = data.filter((pass) =>
+        ["approved", "active"].includes(getPassDisplayStatus(pass))
       ).length;
-      const total = data.length;
-      setPassStats({ active, total });
+      setPassStats({ active, total: data.length });
     } catch (error) {
       console.error("Error fetching gate pass stats:", error);
       setPassStats({ active: 0, total: 0 });
     }
-  };
+  }, []);
 
-  const getUserData = async () => {
+  const getUserData = useCallback(async () => {
     try {
-      const userData = await AsyncStorage.getItem("userData");
-      if (userData) {
-        const parsedData = JSON.parse(userData);
-        setUser({
-          ...parsedData,
-        });
-        fetchPassStats(parsedData.email);
-      } else {
+      const { user: parsedData } = await getSession();
+      if (!parsedData) {
         router.replace("/auth/login");
+        return;
       }
+      setUser(parsedData);
+      emailRef.current = parsedData.email ?? "";
+      await fetchPassStats(emailRef.current);
     } catch (error) {
       console.error("Error fetching user data:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchPassStats, router]);
 
   useEffect(() => {
     getUserData();
 
     const intervalId = setInterval(() => {
-      fetchPassStats(user.email);
-    }, 10000);
+      fetchPassStats(emailRef.current);
+    }, 10_000);
 
     return () => clearInterval(intervalId);
-  }, []);
+  }, [getUserData, fetchPassStats]);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -87,17 +84,16 @@ export default function Profile() {
       duration: 800,
       useNativeDriver: true,
     }).start();
-  }, []);
+  }, [fadeAnim]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     getUserData().finally(() => setRefreshing(false));
-  }, []);
+  }, [getUserData]);
 
   const handleLogout = async () => {
     try {
-      await AsyncStorage.removeItem("userToken");
-      await AsyncStorage.removeItem("userData");
+      await clearSession();
       router.replace("/auth/login");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
@@ -248,21 +244,27 @@ export default function Profile() {
             Profile Details
           </Text>
           {[
-            ["Department", user.dept],
-            ["Year", user.year + "  Year"],
-            ["Student ID", user.rollNo],
-            ["Contact", user.phoneNo ? `+91 ${user.phoneNo}` : "Not set"],
-          ].map(([label, value], idx) => (
+            ["Department", user.dept || "Not set"],
+            ["Year", user.year ? `Year ${user.year}` : "Not set"],
+            // Staff accounts have no roll number; don't render a phantom row.
+            ...(user.role === "student"
+              ? [
+                  ["Student ID", user.rollNo || "Not set"],
+                  [
+                    "Contact",
+                    user.phoneNo ? `+91 ${user.phoneNo}` : "Not set",
+                  ],
+                ]
+              : []),
+          ].map(([label, value], idx, rows) => (
             <View
-              key={idx}
+              key={label}
               className={`flex-row justify-between items-center py-3 ${
-                idx < 3 ? "border-b border-gray-100" : ""
+                idx < rows.length - 1 ? "border-b border-gray-100" : ""
               }`}
             >
               <Text className="text-gray-500 text-sm">{label}</Text>
-              <Text className="font-medium text-gray-800">
-                {value || "Not set"}
-              </Text>
+              <Text className="font-medium text-gray-800">{value}</Text>
             </View>
           ))}
         </View>

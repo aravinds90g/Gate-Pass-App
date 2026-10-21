@@ -20,7 +20,7 @@ test("student sees the approved pass", async ({
   const { studentEmail } = loadFlowAccounts();
   const student = { ...ACCOUNTS.student, email: studentEmail };
   await ensureUserAPI(student);
-  await loginAs(device, screen, bundleId, student, "Aravind S");
+  await loginAs(device, screen, bundleId!, student, "Aravind S");
   await tapText(screen, "Approved Passes");
   await expect(screen.getByText("Your Active Passes")).toBeVisible({
     timeout: 60_000,
